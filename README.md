@@ -30,8 +30,10 @@ omarchy-rust-spotify login      # once
 
 Then open **Spotify (Rust)** from the app launcher. Re-running
 `scripts/dev-install.sh` updates in place: the daemon restarts and resumes
-what was playing, and an open player reloads itself. Customize the player
-with `~/.config/omarchy-rust-spotify/tui.toml` (see
+what was playing, and an open player reloads itself. The player opens on your library (Liked Songs,
+playlists, search); press `t` for the other skins: Winamp 2, iTunes 4,
+a 2004 iPod, a big now-playing view, and Windows 2000 Media Player.
+Customize it with `~/.config/omarchy-rust-spotify/tui.toml` (see
 [`examples/tui.toml`](examples/tui.toml)) and the daemon with `config.toml`
 (`device-name`, `bitrate`, `notifications`).
 

@@ -552,6 +552,261 @@ fn pad(s: &str, w: usize) -> String {
     out
 }
 
+/// How a skin wants the sidebar and lists drawn.
+#[derive(Clone)]
+pub(super) struct ListStyle {
+    pub bg: Color,
+    pub fg: Color,
+    /// Subtitles, headings, placeholder text.
+    pub dim: Color,
+    /// The row that's playing now.
+    pub playing: Color,
+    /// Selection in the focused pane.
+    pub sel_fg: Color,
+    pub sel_bg: Color,
+    /// Selection in the other pane.
+    pub sel_unfocused: Style,
+    pub header: Style,
+    /// Alternate rows on this background (iTunes' stripes).
+    pub stripe: Option<Color>,
+    /// "12. " before each track (Winamp's playlist).
+    pub numbered: bool,
+    pub playing_mark: &'static str,
+}
+
+impl ListStyle {
+    /// The default look, from the Omarchy theme.
+    pub fn themed(p: &Palette) -> Self {
+        Self {
+            bg: p.bg,
+            fg: p.fg,
+            dim: p.muted,
+            playing: p.accent,
+            sel_fg: p.bg,
+            sel_bg: p.accent,
+            sel_unfocused: Style::new().fg(p.accent).add_modifier(Modifier::BOLD),
+            header: Style::new().fg(p.muted).add_modifier(Modifier::BOLD),
+            stripe: None,
+            numbered: false,
+            playing_mark: "▶ ",
+        }
+    }
+}
+
+impl Browser {
+    pub(super) fn list_title(&self) -> String {
+        match (&self.view, self.searching) {
+            (_, true) => format!(" Search: {}▏", self.query),
+            (Some(v), _) => {
+                let total = v
+                    .sections
+                    .first()
+                    .filter(|_| v.sections.len() == 1)
+                    .map(|s| format!(" · {}", s.total))
+                    .unwrap_or_default();
+                format!(" {}{} ", v.title, total)
+            }
+            (None, _) => " ".into(),
+        }
+    }
+
+    pub(super) fn sidebar_focused(&self) -> bool {
+        self.focus == Focus::Sidebar && !self.searching
+    }
+
+    pub(super) fn searching(&self) -> bool {
+        self.searching
+    }
+
+    pub(super) fn focus_sidebar(&mut self) {
+        self.focus = Focus::Sidebar;
+    }
+
+    pub(super) fn list_focused(&self) -> bool {
+        self.focus == Focus::List || self.searching
+    }
+
+    /// The row count of the open list and the index of the playing row, for
+    /// status lines ("12 of 180").
+    pub(super) fn position_of(&self, uri: Option<&str>) -> (usize, Option<usize>) {
+        let Some(v) = &self.view else {
+            return (0, None);
+        };
+        let items: Vec<&Item> = v.sections.iter().flat_map(|s| &s.items).collect();
+        let total = v
+            .sections
+            .first()
+            .filter(|_| v.sections.len() == 1)
+            .map(|s| s.total as usize)
+            .unwrap_or(items.len());
+        (
+            total,
+            uri.and_then(|u| items.iter().position(|i| i.uri == u)),
+        )
+    }
+}
+
+fn row_style(
+    st: &ListStyle,
+    selected: bool,
+    focused: bool,
+    playing: bool,
+    stripe_row: bool,
+) -> Style {
+    let bg = match st.stripe {
+        Some(c) if stripe_row => c,
+        _ => st.bg,
+    };
+    let base = Style::new()
+        .fg(if playing { st.playing } else { st.fg })
+        .bg(bg);
+    match (selected, focused) {
+        (true, true) => base
+            .fg(st.sel_fg)
+            .bg(st.sel_bg)
+            .add_modifier(Modifier::BOLD),
+        (true, false) => base.patch(st.sel_unfocused),
+        _ => base,
+    }
+}
+
+/// The sidebar's rows (Search, Liked Songs, playlists) inside `rect`.
+pub(super) fn draw_sidebar(f: &mut Frame, b: &mut Browser, rect: Rect, st: &ListStyle) {
+    b.sidebar_rect = rect;
+    b.sidebar_rows.clear();
+    let len = b.sidebar_len();
+    let h = rect.height as usize;
+    b.sidebar_scroll = scrolled(b.sidebar_sel, b.sidebar_scroll, h);
+    let focused = b.focus == Focus::Sidebar && !b.searching;
+    for (row, i) in (b.sidebar_scroll..len).enumerate().take(h) {
+        let r = Rect {
+            x: rect.x,
+            y: rect.y + row as u16,
+            width: rect.width,
+            height: 1,
+        };
+        let (label, heading) = match i {
+            0 => ("  Search  /".to_string(), false),
+            1 => ("♥ Liked Songs".to_string(), false),
+            2 => {
+                let t = match (&b.sidebar_error, b.playlists.is_empty()) {
+                    (Some(_), _) => "Playlists (unavailable)",
+                    (None, true) => "Playlists (loading…)",
+                    _ => "Playlists",
+                };
+                (t.to_string(), true)
+            }
+            _ => (b.playlists[i - SIDEBAR_FIXED].name.clone(), false),
+        };
+        let style = if heading {
+            st.header.bg(st.bg)
+        } else {
+            row_style(st, i == b.sidebar_sel, focused, false, false)
+        };
+        let text = format!(" {}", pad(&label, (rect.width as usize).saturating_sub(1)));
+        f.render_widget(Paragraph::new(Line::styled(text, style)), r);
+        b.sidebar_rows.push((r, i));
+    }
+}
+
+/// The open list (or search prompt, loading, error) inside `rect`.
+pub(super) fn draw_list(
+    f: &mut Frame,
+    b: &mut Browser,
+    rect: Rect,
+    current: Option<&str>,
+    st: &ListStyle,
+) {
+    b.list_rect = rect;
+    b.list_rows.clear();
+    let msg = |f: &mut Frame, text: &str, color: Color| {
+        f.render_widget(
+            Paragraph::new(Line::styled(
+                text.to_string(),
+                Style::new().fg(color).bg(st.bg),
+            ))
+            .alignment(Alignment::Center),
+            Rect {
+                y: rect.y + rect.height / 2,
+                height: 1,
+                ..rect
+            },
+        );
+    };
+    if b.searching {
+        msg(
+            f,
+            "Type to search songs, artists, albums and playlists · Enter to search · Esc to cancel",
+            st.dim,
+        );
+        return;
+    }
+    let focused = b.focus == Focus::List;
+    let Some(v) = b.view.as_mut() else { return };
+    if let Some(e) = &v.error {
+        return msg(f, e, st.playing);
+    }
+    if v.loading {
+        return msg(f, "Loading…", st.dim);
+    }
+    let rows = rows(&v.sections);
+    if rows.is_empty() {
+        return msg(f, "Nothing here", st.dim);
+    }
+    let h = rect.height as usize;
+    v.scroll = scrolled(v.sel, v.scroll, h);
+    let w = rect.width as usize;
+    let num_w = if st.numbered { 5 } else { 0 };
+    let mark_w = st.playing_mark.chars().count();
+    let time_w = 6;
+    let avail = w.saturating_sub(num_w + mark_w + time_w + 2);
+    let sub_w = avail * 2 / 5;
+    let name_w = avail.saturating_sub(sub_w + 1);
+    for (row, i) in (v.scroll..rows.len()).enumerate().take(h) {
+        let r = Rect {
+            x: rect.x,
+            y: rect.y + row as u16,
+            width: rect.width,
+            height: 1,
+        };
+        match &rows[i] {
+            Row::Header(s) => {
+                let t = format!(" {:<w$}", s.title, w = w.saturating_sub(1));
+                f.render_widget(Paragraph::new(Line::styled(t, st.header.bg(st.bg))), r);
+            }
+            Row::Item(it) => {
+                let playing = current == Some(it.uri.as_str());
+                let mark = if playing {
+                    st.playing_mark.to_string()
+                } else {
+                    " ".repeat(mark_w)
+                };
+                let num = if st.numbered {
+                    // Track number within the whole list, as Winamp's
+                    // playlist editor showed it (headers don't count).
+                    let before = rows[..i]
+                        .iter()
+                        .filter(|r| matches!(r, Row::Item(_)))
+                        .count();
+                    format!("{:>3}. ", before + 1)
+                } else {
+                    String::new()
+                };
+                let dur = it.duration_ms.map(fmt_ms).unwrap_or_default();
+                let line = format!(
+                    "{num}{mark}{} {} {:>time_w$} ",
+                    pad(&it.name, name_w),
+                    pad(&it.subtitle, sub_w),
+                    dur
+                );
+                let style = row_style(st, i == v.sel, focused, playing, (v.scroll + row) % 2 == 1);
+                f.render_widget(Paragraph::new(Line::styled(line, style)), r);
+                b.list_rows.push((r, i));
+            }
+        }
+    }
+}
+
 pub(super) fn draw(f: &mut Frame, app: &mut App) {
     let p = app.settings.palette;
     let base = Style::new().fg(p.fg).bg(p.bg);
@@ -586,72 +841,11 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         .style(base);
     let side_in = side_block.inner(side);
     f.render_widget(side_block, side);
-    b.sidebar_rect = side_in;
-    b.sidebar_rows.clear();
-    let len = b.sidebar_len();
-    let h = side_in.height as usize;
-    b.sidebar_scroll = scrolled(b.sidebar_sel, b.sidebar_scroll, h);
-    for (row, i) in (b.sidebar_scroll..len).enumerate().take(h) {
-        let (label, style) = match i {
-            0 => ("  Search  /".to_string(), Style::new().fg(p.fg)),
-            1 => ("♥ Liked Songs".to_string(), Style::new().fg(p.fg)),
-            2 => {
-                let t = match (&b.sidebar_error, b.playlists.is_empty()) {
-                    (Some(_), _) => "Playlists (unavailable)",
-                    (None, true) => "Playlists (loading…)",
-                    _ => "Playlists",
-                };
-                (
-                    t.to_string(),
-                    Style::new().fg(p.muted).add_modifier(Modifier::BOLD),
-                )
-            }
-            _ => (
-                b.playlists[i - SIDEBAR_FIXED].name.clone(),
-                Style::new().fg(p.fg),
-            ),
-        };
-        let r = Rect {
-            x: side_in.x,
-            y: side_in.y + row as u16,
-            width: side_in.width,
-            height: 1,
-        };
-        let selected = i == b.sidebar_sel;
-        let style = if selected {
-            let s = style.add_modifier(Modifier::BOLD);
-            if b.focus == Focus::Sidebar {
-                s.fg(p.bg).bg(p.accent)
-            } else {
-                s.fg(p.accent)
-            }
-        } else {
-            style
-        };
-        f.render_widget(
-            Paragraph::new(Line::styled(
-                format!(" {}", pad(&label, side_in.width as usize - 1)),
-                style,
-            )),
-            r,
-        );
-        b.sidebar_rows.push((r, i));
-    }
+    let st = ListStyle::themed(&p);
+    draw_sidebar(f, b, side_in, &st);
 
     // ---- list
-    let title = match (&b.view, b.searching) {
-        (_, true) => format!(" Search: {}▏", b.query),
-        (Some(v), _) => {
-            let total = v
-                .sections
-                .first()
-                .filter(|_| v.sections.len() == 1)
-                .map(|s| format!(" · {}", s.total))
-                .unwrap_or_default();
-            format!(" {}{} ", v.title, total)
-        }
-        (None, _) => " ".into(),
-    };
+    let title = b.list_title();
     let list_block = Block::new()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
@@ -663,86 +857,8 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         .style(base);
     let list_in = list_block.inner(list);
     f.render_widget(list_block, list);
-    b.list_rect = list_in;
-    b.list_rows.clear();
-
-    let msg = |f: &mut Frame, text: &str, color: Color| {
-        f.render_widget(
-            Paragraph::new(Line::styled(text.to_string(), Style::new().fg(color)))
-                .alignment(Alignment::Center),
-            Rect {
-                y: list_in.y + list_in.height / 2,
-                height: 1,
-                ..list_in
-            },
-        );
-    };
-    if b.searching {
-        msg(
-            f,
-            "Type to search songs, artists, albums and playlists · Enter to search · Esc to cancel",
-            p.muted,
-        );
-    } else if let Some(v) = b.view.as_mut() {
-        if let Some(e) = &v.error {
-            msg(f, e, p.accent);
-        } else if v.loading {
-            msg(f, "Loading…", p.muted);
-        } else {
-            let rows = rows(&v.sections);
-            if rows.is_empty() {
-                msg(f, "Nothing here", p.muted);
-            }
-            let h = list_in.height as usize;
-            v.scroll = scrolled(v.sel, v.scroll, h);
-            let w = list_in.width as usize;
-            let time_w = 6;
-            let sub_w = (w.saturating_sub(time_w + 4)) * 2 / 5;
-            let name_w = w.saturating_sub(sub_w + time_w + 4);
-            let current = app.state.track.as_ref().map(|t| t.uri.as_str());
-            for (row, i) in (v.scroll..rows.len()).enumerate().take(h) {
-                let r = Rect {
-                    x: list_in.x,
-                    y: list_in.y + row as u16,
-                    width: list_in.width,
-                    height: 1,
-                };
-                match &rows[i] {
-                    Row::Header(s) => {
-                        let t = format!(" {} ", s.title);
-                        f.render_widget(
-                            Paragraph::new(Line::styled(
-                                t,
-                                Style::new().fg(p.muted).add_modifier(Modifier::BOLD),
-                            )),
-                            r,
-                        );
-                    }
-                    Row::Item(it) => {
-                        let playing = current == Some(it.uri.as_str());
-                        let mark = if playing { "▶ " } else { "  " };
-                        let dur = it.duration_ms.map(fmt_ms).unwrap_or_default();
-                        let line = format!(
-                            "{mark}{} {} {:>time_w$} ",
-                            pad(&it.name, name_w),
-                            pad(&it.subtitle, sub_w),
-                            dur
-                        );
-                        let mut style = Style::new().fg(if playing { p.accent } else { p.fg });
-                        if i == v.sel {
-                            style = if b.focus == Focus::List {
-                                style.fg(p.bg).bg(p.accent).add_modifier(Modifier::BOLD)
-                            } else {
-                                style.add_modifier(Modifier::BOLD | Modifier::UNDERLINED)
-                            };
-                        }
-                        f.render_widget(Paragraph::new(Line::styled(line, style)), r);
-                        b.list_rows.push((r, i));
-                    }
-                }
-            }
-        }
-    }
+    let current = app.state.track.as_ref().map(|t| t.uri.clone());
+    draw_list(f, b, list_in, current.as_deref(), &st);
 
     // ---- now-playing bar
     let bar_block = Block::new()

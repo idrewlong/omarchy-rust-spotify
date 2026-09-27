@@ -33,7 +33,11 @@ use ratatui_image::{
 use serde::Deserialize;
 
 mod classic;
+mod ipod;
+mod itunes;
 mod library;
+mod paint;
+mod winamp;
 mod wmp;
 
 // ---------------------------------------------------------------- settings
@@ -46,14 +50,32 @@ enum Skin {
     /// Find and play music: sidebar, lists, now-playing bar.
     #[default]
     Library,
+    /// Winamp 2.x's base skin.
+    Winamp,
+    /// iTunes 4, brushed metal.
+    Itunes,
+    /// The 2004 iPod with Click Wheel.
+    Ipod,
     Classic,
     Wmp2000,
 }
 
 impl Skin {
+    /// Skins built around the library browser (sidebar, lists, search):
+    /// they get keys and clicks for it, and its requests at startup.
+    fn uses_browser(self) -> bool {
+        matches!(
+            self,
+            Skin::Library | Skin::Winamp | Skin::Itunes | Skin::Ipod
+        )
+    }
+
     fn next(self) -> Self {
         match self {
-            Skin::Library => Skin::Classic,
+            Skin::Library => Skin::Winamp,
+            Skin::Winamp => Skin::Itunes,
+            Skin::Itunes => Skin::Ipod,
+            Skin::Ipod => Skin::Classic,
             Skin::Classic => Skin::Wmp2000,
             Skin::Wmp2000 => Skin::Library,
         }
@@ -336,6 +358,7 @@ struct App {
     /// Clickable areas from the last frame, filled in by the skin.
     hits: Vec<(Rect, Hit)>,
     browser: library::Browser,
+    ipod: ipod::Ipod,
 }
 
 #[derive(Debug, Clone)]
@@ -460,6 +483,9 @@ fn draw(f: &mut Frame, app: &mut App) {
     app.hits.clear();
     match app.settings.layout.skin {
         Skin::Library => library::draw(f, app),
+        Skin::Winamp => winamp::draw(f, app),
+        Skin::Itunes => itunes::draw(f, app),
+        Skin::Ipod => ipod::draw(f, app),
         Skin::Classic => classic::draw(f, app),
         Skin::Wmp2000 => wmp::draw(f, app),
     }
@@ -629,6 +655,7 @@ fn event_loop(
         needs_clear: false,
         hits: Vec::new(),
         browser: Default::default(),
+        ipod: Default::default(),
     };
     let mut watched = (mtime(&theme_path()), mtime(&tui_path()));
     let mut last_check = std::time::Instant::now();
@@ -660,7 +687,14 @@ fn event_loop(
                 Msg::Input(_) if started.elapsed() < Duration::from_millis(500) => {}
                 Msg::Input(Event::Key(k)) if k.kind == KeyEventKind::Press => {
                     // The library view gets keys first (navigation, search).
-                    if app.settings.layout.skin == Skin::Library {
+                    if app.settings.layout.skin == Skin::Ipod {
+                        let mut out = Vec::new();
+                        let handled = ipod::on_key(&mut app, k.code, k.modifiers, &mut out);
+                        send_out(&mut writer, out);
+                        if handled {
+                            continue;
+                        }
+                    } else if app.settings.layout.skin.uses_browser() {
                         let mut out = Vec::new();
                         let handled = app.browser.on_key(k.code, k.modifiers, &mut out);
                         send_out(&mut writer, out);
@@ -675,7 +709,14 @@ fn event_loop(
                     }
                 }
                 Msg::Input(Event::Mouse(m))
-                    if app.settings.layout.skin == Skin::Library && {
+                    if app.settings.layout.skin == Skin::Ipod && {
+                        let mut out = Vec::new();
+                        let used = ipod::on_mouse(&mut app, m.kind, m.column, m.row, &mut out);
+                        send_out(&mut writer, out);
+                        used
+                    } => {}
+                Msg::Input(Event::Mouse(m))
+                    if app.settings.layout.skin.uses_browser() && {
                         let mut out = Vec::new();
                         let used = app.browser.on_mouse(m.kind, m.column, m.row, &mut out);
                         send_out(&mut writer, out);
@@ -701,7 +742,7 @@ fn event_loop(
 
         // Library: first requests once connected (also after a reconnect,
         // since the daemon may have restarted).
-        if app.connected && app.settings.layout.skin == Skin::Library {
+        if app.connected && app.settings.layout.skin.uses_browser() {
             let mut out = Vec::new();
             app.browser.start(&mut out);
             send_out(&mut writer, out);
@@ -777,10 +818,14 @@ fn apply(app: &mut App, msg: Msg) {
 }
 
 #[cfg(test)]
-mod tests {
+pub(super) mod tests {
     use super::*;
     use omarchy_rust_spotify_proto::Track;
     use ratatui::{Terminal, backend::TestBackend};
+
+    pub(super) fn test_app(skin: Skin, playing: bool) -> App {
+        app(skin, playing)
+    }
 
     fn app(skin: Skin, playing: bool) -> App {
         let mut settings = load_settings();
@@ -814,6 +859,7 @@ mod tests {
             needs_clear: false,
             hits: Vec::new(),
             browser: Default::default(),
+            ipod: Default::default(),
         }
     }
 
@@ -821,7 +867,14 @@ mod tests {
     /// terminal up, with and without a track.
     #[test]
     fn skins_render_at_any_size() {
-        for skin in [Skin::Library, Skin::Classic, Skin::Wmp2000] {
+        for skin in [
+            Skin::Library,
+            Skin::Winamp,
+            Skin::Itunes,
+            Skin::Ipod,
+            Skin::Classic,
+            Skin::Wmp2000,
+        ] {
             for playing in [false, true] {
                 for (w, h) in [
                     (1, 1),
@@ -837,6 +890,8 @@ mod tests {
                     let mut app = app(skin, playing);
                     if playing {
                         app.browser = library::Browser::sample();
+                        // The iPod's menus as well as Now Playing.
+                        app.ipod.menu = w % 2 == 0;
                     }
                     let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
                     term.draw(|f| draw(f, &mut app))

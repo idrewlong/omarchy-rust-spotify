@@ -9,9 +9,14 @@
 # muted = "#51545e"       # album, times, help, empty progress
 
 [layout]
-# skin = "library"        # library | classic | wmp2000   (press t to cycle)
-#                         # wmp2000 keeps its Windows 2000 palette; [colors]
-#                         # apply to library and classic
+# skin = "library"        # press t to cycle:
+#   library   find and play music (default), in your Omarchy theme
+#   winamp    Winamp 2.x base skin: green LCD, playlist editor
+#   itunes    iTunes 4, 2003 brushed metal, striped song list
+#   ipod      2004 iPod with a clickable click wheel and menus
+#   classic   big now-playing, in your Omarchy theme
+#   wmp2000   Windows 2000 era Media Player
+# [colors] apply to library and classic; the period skins keep their own.
 # cover = "left"          # left | top | none  (left falls back to top when narrow)
 # cover-size = 0          # rows; 0 = as big as fits
 # align = "center"        # center | left

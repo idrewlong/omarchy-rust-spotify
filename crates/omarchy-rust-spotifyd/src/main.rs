@@ -353,6 +353,7 @@ async fn run() -> Result<()> {
 
     tokio::spawn(state::run(
         initial_config.device_name.clone(),
+        initial_config.bitrate,
         events,
         inputs_tx.clone(),
         inputs_rx,

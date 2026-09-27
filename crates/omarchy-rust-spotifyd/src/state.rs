@@ -136,6 +136,7 @@ fn track_from(item: &AudioItem) -> Track {
 
 pub async fn run(
     device_name: String,
+    bitrate_kbps: u16,
     mut events: PlayerEventChannel,
     inputs_tx: mpsc::UnboundedSender<Input>,
     mut inputs: mpsc::UnboundedReceiver<Input>,
@@ -145,6 +146,7 @@ pub async fn run(
 ) {
     let mut state = PlayerState {
         device_name,
+        bitrate_kbps,
         volume: 50,
         ..Default::default()
     };

@@ -105,6 +105,9 @@ pub struct PlayerState {
     pub login_url: Option<String>,
     /// Why the last sign-in failed, until the next one starts.
     pub login_error: Option<String>,
+    /// Streaming bitrate in kbps (96, 160 or 320).
+    #[serde(default)]
+    pub bitrate_kbps: u16,
 }
 
 impl PlayerState {
