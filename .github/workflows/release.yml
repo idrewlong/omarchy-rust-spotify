@@ -1,0 +1,65 @@
+# Builds the binaries for each tagged version (v0.1.0, ...) on x86_64 and
+# aarch64 Linux and attaches them to the GitHub release with SHA256SUMS.
+# scripts/install.sh downloads the tarball matching manifest.json's version,
+# so the tag must equal it (checked below).
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Tag matches manifest.json
+        run: |
+          want="v$(jq -r .version manifest.json)"
+          [ "$want" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME but manifest.json says $want"; exit 1; }
+      - name: System libraries
+        run: sudo apt-get update && sudo apt-get install -y libpulse-dev libdbus-1-dev pkg-config
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Test
+        run: cargo test --release --locked
+      - name: Build
+        run: cargo build --release --locked
+      - name: Package
+        run: |
+          v="${GITHUB_REF_NAME#v}"
+          mkdir dist
+          tar -C target/release -czf "dist/omarchy-rust-spotify-$v-${{ matrix.arch }}-linux.tar.gz" \
+            omarchy-rust-spotifyd omarchy-rust-spotify omarchy-rust-spotify-viz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.arch }}
+          path: dist/*
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+      - name: Checksums
+        run: cd dist && sha256sum *.tar.gz > SHA256SUMS && cat SHA256SUMS
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" \
+            --title "$GITHUB_REF_NAME" --generate-notes

@@ -1,61 +1,90 @@
 # omarchy-rust-spotify
 
-A fast, skinnable Spotify Connect player for [Omarchy](https://omarchy.org),
-built in Rust on [librespot](https://github.com/librespot-org/librespot).
-It targets Omarchy on Apple Silicon (Asahi Linux, aarch64) first, and x86_64
-too.
+**The Spotify player you can skin**, for [Omarchy](https://omarchy.org).
+A music icon in your bar with a mini player on hover, and a fast terminal
+player with nine looks (your Omarchy theme, Winamp, iTunes, a click-wheel
+iPod, Zune, Windows Media Player 11 and 2000) plus real visualizers, from
+WMP-style bars and fire to full-resolution GPU shaders.
 
-**Status: early, but usable.** The daemon plays through PipeWire on Asahi,
-survives network drops, signs in by itself, sends notifications and serves
-MPRIS; a themeable TUI ("Spotify (Rust)" in the app launcher) controls it.
-M0 results: [docs/bench/m0.md](docs/bench/m0.md). The full design is in
-[`docs/PLAN.md`](docs/PLAN.md):
+Built in Rust on [librespot](https://github.com/librespot-org/librespot):
+no official Spotify app, no spotifyd, no cava, no Chromium. About 27 MB for
+the background player and 20 MB for the player window. Apple Silicon
+(Asahi) and x86_64.
 
-- a background daemon that plays, pauses and skips through librespot
-  directly, with no Web API round trip and no rate-limit stalls
-- sub-20 ms from a track change to the bar
-- a QML plugin for Omarchy's shell: bar icon, hover mini player, full player
-  window and search palette
-- a skin system, from recoloring to full custom layouts (a Windows 2000 Media
-  Player skin is one of the planned built-ins), following your Omarchy theme
-  by default
-- a TUI and a CLI
-
-## Try it
+## Install
 
 ```sh
-scripts/dev-install.sh          # build, install for this user, start the daemon
-omarchy-rust-spotify login      # once
+omarchy plugin add https://github.com/idrewlong/omarchy-rust-spotify --enable
 ```
 
-Then open **Spotify (Rust)** from the app launcher. Re-running
-`scripts/dev-install.sh` updates in place: the daemon restarts and resumes
-what was playing, and an open player reloads itself. The player opens on your library (Liked Songs,
-playlists, search); press `t` for the other skins: Winamp 2, iTunes 4,
-a 2004 iPod, Zune, Windows Media Player 11, a big now-playing view,
-Windows 2000 Media Player, and a full-screen visualizer with styles after
-WMP's (bars, scope, fire storm, musical colors, alchemy, battery; `v` cycles).
+Then hover the music icon in the bar and click **Set up**. A terminal shows
+the install (prebuilt binaries for your machine, checked against the
+release's checksums; built from source if there's no release for it), then
+your browser opens to sign in to Spotify. That's it.
 
-Press `t` through the skins and each visualizer is a stop of its own
-(`T` goes back): the terminal ones, then the GPU presets in full resolution
-("battery hd", "warp hd", ...), drawn right in the player as Sixel images in
-terminals that support them (foot, the Omarchy default, does). Or open
-**Spotify Visualizer** from the app launcher (`V` in the visualizer skin)
-for them in a window of their own, driven by the same audio. Battery, Alchemy, Spectrum, Ambience and
-Warp are built in; ←/→ switch, `f` goes fullscreen, space/n/p control
-playback. Presets are small WGSL files, so you can write your own: drop one
-in `~/.config/omarchy-rust-spotify/viz/` (start from
-[`examples/viz/ring.wgsl`](examples/viz/ring.wgsl)) and it reloads each
-time you save.
-Customize it with `~/.config/omarchy-rust-spotify/tui.toml` (see
-[`examples/tui.toml`](examples/tui.toml)) and the daemon with `config.toml`
-(`device-name`, `bitrate`, `notifications`).
+Requires Spotify Premium (Spotify's rule for third-party playback).
 
-Looking for something that works today? The current build (spotify-player
-plus a QML mini player) is
-[omarchy-ncspot-arm](https://github.com/idrewlong/omarchy-ncspot-arm).
+## Use it
 
-Requires Spotify Premium.
+- **Bar icon:** hover for the mini player (cover, progress, shuffle,
+  previous, play/pause, next, repeat); click to open the player;
+  middle-click plays/pauses; scroll skips.
+- **Player** (also **Spotify (Rust)** in the app launcher): your library,
+  playlists (most recently played first, like Spotify) and search. `t`
+  steps through the skins and every visualizer, `T` goes back. Space
+  plays/pauses, `n`/`p` skip, `/` searches.
+- **Visualizers:** seven terminal styles (bars, mirror, scope, fire storm,
+  musical colors, alchemy, battery), then five GPU presets (battery,
+  alchemy, spectrum, ambience, warp) drawn in full resolution right in the
+  player in terminals that show images (foot, Omarchy's default, does).
+  `V` opens them in a window of their own, as does **Spotify Visualizer**
+  in the app launcher (`f` for fullscreen).
+- **Volume** is your system volume: the bar's slider and the player agree.
+- Notifications on track changes; click one to open the player. Media keys
+  and anything else that speaks MPRIS work too.
+
+## Make it yours
+
+- `~/.config/omarchy-rust-spotify/tui.toml`: default skin, visualizer,
+  playlist order, colors, layout (see [`examples/tui.toml`](examples/tui.toml)).
+- `~/.config/omarchy-rust-spotify/config.toml`: device name, bitrate,
+  notifications.
+- Your own visualizers: a WGSL file in `~/.config/omarchy-rust-spotify/viz/`
+  (start from [`examples/viz/ring.wgsl`](examples/viz/ring.wgsl)). It shows
+  up among the GPU presets and reloads each time you save.
+- Faster library and search: sign in with your own
+  [Spotify developer app](https://developer.spotify.com/dashboard) (redirect
+  URI `http://127.0.0.1:8989/login`) with `omarchy-rust-spotify login-app
+  <client-id>`. Your own app means your own rate limit, shared with no one.
+
+## Update
+
+`omarchy plugin update io.github.idrewlong.omarchy-rust-spotify`, then
+**Update** in the bar icon's card. What was playing carries on.
+
+## Remove
+
+```sh
+~/.config/omarchy/plugins/io.github.idrewlong.omarchy-rust-spotify/scripts/uninstall.sh
+omarchy plugin remove io.github.idrewlong.omarchy-rust-spotify
+```
+
+The first command stops and removes the player, its service, launcher
+entries and window rules; add `--purge` to also delete your sign-in, cache
+and settings.
+
+## Develop
+
+```sh
+scripts/dev-install.sh    # build, install this build, link this checkout as the bar plugin
+```
+
+Re-running it updates in place: the daemon restarts and resumes, an open
+player reloads itself. Design notes are in [`docs/PLAN.md`](docs/PLAN.md),
+the field of other Omarchy music plugins in
+[`docs/RESEARCH-plugins.md`](docs/RESEARCH-plugins.md). Releases: set
+`version` in `Cargo.toml` and `manifest.json`, then push a matching `v` tag;
+CI builds x86_64 and aarch64 binaries and publishes them with checksums.
 
 ## License
 

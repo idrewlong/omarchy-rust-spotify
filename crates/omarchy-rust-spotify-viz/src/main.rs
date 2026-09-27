@@ -398,6 +398,10 @@ fn main() -> Result<()> {
                 println!("\nyour presets go in {}", presets::user_dir().display());
                 return Ok(());
             }
+            "--version" | "-V" => {
+                println!("omarchy-rust-spotify-viz {}", env!("CARGO_PKG_VERSION"));
+                return Ok(());
+            }
             "-h" | "--help" => {
                 println!("{HELP}");
                 return Ok(());

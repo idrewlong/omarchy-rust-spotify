@@ -76,6 +76,70 @@ BarWidget {
     ])
   }
 
+  // ---- setup, updates, sign-in -----------------------------------------
+
+  // This plugin's folder, from this file itself: the shell doesn't hand
+  // third-party plugins their folder (Omarchy 4.0.3 and later).
+  readonly property string pluginDir: decodeURIComponent(
+    String(Qt.resolvedUrl(".")).replace(/^file:\/\//, "")).replace(/\/$/, "")
+
+  // The version this plugin checkout ships, and the one installed.
+  property string wantVersion: ""
+  property string haveVersion: ""
+  property bool haveChecked: false
+
+  FileView {
+    path: root.pluginDir + "/manifest.json"
+    watchChanges: true
+    printErrors: false
+    onLoaded: {
+      try { root.wantVersion = JSON.parse(text()).version || "" } catch (e) {}
+    }
+    onFileChanged: reload()
+  }
+
+  FileView {
+    id: installedFile
+    path: root.home + "/.local/share/omarchy-rust-spotify/installed-version"
+    watchChanges: true
+    printErrors: false
+    onLoaded: { root.haveVersion = text().trim(); root.haveChecked = true }
+    onLoadFailed: { root.haveVersion = ""; root.haveChecked = true }
+    onFileChanged: reload()
+  }
+
+  // Until it's installed the file doesn't exist to watch: look again now
+  // and then.
+  Timer {
+    interval: 3000
+    repeat: true
+    running: root.haveVersion === ""
+    onTriggered: installedFile.reload()
+  }
+
+  readonly property bool needsSetup: haveChecked && haveVersion === "" && !online
+  readonly property bool updateReady: haveVersion !== "" && wantVersion !== ""
+    && haveVersion !== wantVersion
+
+  // Setup and updates run the installer where you can watch it.
+  function runInstaller() {
+    Quickshell.execDetached([
+      "omarchy-launch-floating-terminal-with-presentation",
+      "bash '" + root.pluginDir + "/scripts/install.sh'"
+    ])
+  }
+
+  // The one thing to do next, if any: [label, function].
+  readonly property var action: needsSetup ? ["Set up", runInstaller]
+    : updateReady ? ["Update to " + wantVersion, runInstaller]
+    : !online ? ["Start the player", function() {
+        Quickshell.execDetached(["systemctl", "--user", "start", "omarchy-rust-spotifyd.service"])
+      }]
+    : st.error === "signed_out" ? ["Sign in to Spotify", function() {
+        Quickshell.execDetached([root.home + "/.local/bin/omarchy-rust-spotify", "login"])
+      }]
+    : null
+
   // ---- derived state -----------------------------------------------------
 
   readonly property var track: st.track || null
@@ -85,7 +149,8 @@ BarWidget {
   readonly property string artUrl: track
     ? (track.cover_path ? "file://" + track.cover_path : (track.cover_url || ""))
     : ""
-  readonly property string problem: !online ? "Player isn't running"
+  readonly property string problem: needsSetup ? "Set up omarchy-rust-spotify"
+    : !online ? "Player isn't running"
     : st.error === "signed_out" ? "Not signed in"
     : st.error === "premium_required" ? "Spotify Premium is required"
     : st.error === "offline" ? "Can't reach Spotify"
@@ -146,7 +211,8 @@ BarWidget {
       if (b === Qt.MiddleButton) { root.send({ cmd: "play_pause" }); return }
       if (b !== Qt.LeftButton) return
       root.popupOpen = false
-      root.openPlayer()
+      if (root.needsSetup) root.runInstaller()
+      else root.openPlayer()
     }
     onWheelMoved: function(delta) {
       root.send({ cmd: delta > 0 ? "prev" : "next" })
@@ -218,12 +284,29 @@ BarWidget {
             width: parent.width
             visible: text !== ""
             textFormat: Text.PlainText
-            text: root.problem !== "" ? "Click to open the player" : root.artist
+            text: root.needsSetup ? "Installs the player, then signs you in"
+              : root.problem !== "" ? (root.action ? "" : "Click to open the player")
+              : root.artist
             color: Qt.darker(root.bar.foreground, 1.3)
             font.family: root.bar.fontFamily
             font.pixelSize: Style.font.bodySmall
             elide: Text.ElideRight
           }
+        }
+      }
+
+      // Set up, update, start, or sign in: whatever comes next.
+      Button {
+        visible: root.action !== null
+        anchors.horizontalCenter: parent.horizontalCenter
+        text: root.action ? root.action[0] : ""
+        foreground: root.bar.foreground
+        bordered: true
+        horizontalPadding: Style.spacing.panelGap
+        verticalPadding: Style.spacing.controlPaddingY
+        onClicked: {
+          root.popupOpen = false
+          root.action[1]()
         }
       }
 
@@ -280,6 +363,7 @@ BarWidget {
       }
 
       Row {
+        visible: root.online
         anchors.horizontalCenter: parent.horizontalCenter
         spacing: Style.space(4)
 

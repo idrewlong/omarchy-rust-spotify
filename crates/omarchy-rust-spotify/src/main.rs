@@ -585,6 +585,10 @@ fn ls(args: &[String]) -> Result<()> {
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
+        Some("--version" | "-V") => {
+            println!("omarchy-rust-spotify {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         Some("status") | None => status(),
         Some("watch") => watch(),
         Some("ls") => ls(&args[1..]),

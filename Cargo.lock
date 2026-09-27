@@ -3128,7 +3128,7 @@ dependencies = [
 
 [[package]]
 name = "omarchy-rust-spotify"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "image",
@@ -3143,7 +3143,7 @@ dependencies = [
 
 [[package]]
 name = "omarchy-rust-spotify-proto"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "libc",
  "serde",
@@ -3152,7 +3152,7 @@ dependencies = [
 
 [[package]]
 name = "omarchy-rust-spotify-viz"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3166,7 +3166,7 @@ dependencies = [
 
 [[package]]
 name = "omarchy-rust-spotifyd"
-version = "0.0.1"
+version = "0.1.0"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
