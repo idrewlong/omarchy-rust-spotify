@@ -5,16 +5,18 @@ mod covers;
 mod ipc;
 mod latency;
 mod mpris;
+mod secrets;
 mod sink;
 mod state;
+mod supervisor;
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use anyhow::{Context, Result, bail};
-use librespot_connect::{ConnectConfig, Spirc};
-use librespot_core::{Session, SessionConfig, cache::Cache, config::DeviceType};
+use anyhow::{Context, Result};
+use librespot_connect::Spirc;
+use librespot_core::{Session, SessionConfig, cache::Cache};
 use librespot_playback::{
     config::{Bitrate, PlayerConfig},
     mixer::{self, MixerConfig},
@@ -22,20 +24,12 @@ use librespot_playback::{
 };
 use omarchy_rust_spotify_proto::{Command, PlayerState, Repeat};
 use tokio::signal::unix::{SignalKind, signal};
-use tokio::sync::{broadcast, mpsc, watch};
-
-const DEVICE_NAME: &str = "Omarchy";
-
-fn home() -> PathBuf {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("/"))
-}
+use tokio::sync::{Notify, broadcast, mpsc, watch};
 
 fn cache_dir() -> PathBuf {
     std::env::var_os("XDG_CACHE_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| home().join(".cache"))
+        .unwrap_or_else(|| secrets::home().join(".cache"))
         .join("omarchy-rust-spotify")
 }
 
@@ -55,37 +49,15 @@ fn device_id(dir: &Path) -> Result<String> {
     Ok(id)
 }
 
-/// librespot's cache holds reusable credentials in `credentials.json`. On
-/// first run, import them from spotify-player (same librespot format), so
-/// switching over needs no new sign-in.
-fn load_credentials(
-    cache: &Cache,
-    dir: &Path,
-) -> Result<librespot_core::authentication::Credentials> {
-    if let Some(creds) = cache.credentials() {
-        return Ok(creds);
-    }
-    let legacy = home().join(".cache/spotify-player/credentials.json");
-    if legacy.is_file() {
-        let dst = dir.join("credentials.json");
-        std::fs::copy(&legacy, &dst).context("import spotify-player credentials")?;
-        std::fs::set_permissions(&dst, std::fs::Permissions::from_mode(0o600))?;
-        tracing::info!("imported credentials from {}", legacy.display());
-        if let Some(creds) = cache.credentials() {
-            return Ok(creds);
-        }
-    }
-    bail!(
-        "no Spotify credentials: sign in with spotify-player once (in-daemon sign-in arrives in M1)"
-    )
-}
-
 async fn execute(
-    spirc: &Spirc,
+    spirc: Option<&Spirc>,
     state: &watch::Receiver<(u64, PlayerState)>,
     interrupt: &sink::Interrupt,
     cmd: Command,
 ) -> Result<()> {
+    let Some(spirc) = spirc else {
+        anyhow::bail!("not connected to Spotify");
+    };
     let (active, playing) = {
         let s = &state.borrow().1;
         (
@@ -135,6 +107,10 @@ fn main() -> Result<()> {
     // before any thread exists.
     // SAFETY: mallopt only adjusts allocator tunables.
     unsafe { libc::mallopt(libc::M_ARENA_MAX, 2) };
+    // Everything this daemon writes (login, covers, state) is private to the
+    // user from the moment it's created, including files librespot creates.
+    // SAFETY: umask only changes the process file-creation mask.
+    unsafe { libc::umask(0o077) };
 
     // Two workers: the daemon's own work is bursts of tiny tasks. librespot
     // runs its audio on dedicated threads regardless.
@@ -154,17 +130,20 @@ async fn run() -> Result<()> {
         .init();
 
     let dir = cache_dir();
-    std::fs::create_dir_all(&dir)?;
-    std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700))?;
-
-    let cache = Cache::new(Some(&dir), Some(&dir), None, None)?;
-    let credentials = load_credentials(&cache, &dir)?;
+    let secrets_dir = secrets::secrets_dir();
+    for d in [&dir, &secrets_dir] {
+        std::fs::create_dir_all(d)?;
+        std::fs::set_permissions(d, std::fs::Permissions::from_mode(0o700))?;
+    }
+    // Credentials live apart from the cache; the volume stays in the cache.
+    let cache = Cache::new(Some(&secrets_dir), Some(&dir), None, None)?;
+    let secrets = secrets::Secrets::new(cache.clone(), secrets_dir);
 
     let session_config = SessionConfig {
         device_id: device_id(&dir)?,
         ..Default::default()
     };
-    let session = Session::new(session_config, Some(cache));
+    let session = Session::new(session_config.clone(), Some(cache.clone()));
 
     let mixer = mixer::find(None).context("no mixer")?(MixerConfig::default())?;
     let player_config = PlayerConfig {
@@ -182,10 +161,13 @@ async fn run() -> Result<()> {
     let (updates_tx, _) = broadcast::channel(256);
     let (inputs_tx, inputs_rx) = mpsc::unbounded_channel();
     let (cmds_tx, mut cmds_rx) = mpsc::unbounded_channel::<Command>();
-    let covers = covers::Covers::new(dir.join("covers"), session.clone())?;
+    let (session_tx, session_rx) = watch::channel(session);
+    let (spirc_tx, spirc_rx) = watch::channel::<Option<Arc<Spirc>>>(None);
+    let credentials_changed = Arc::new(Notify::new());
+    let covers = covers::Covers::new(dir.join("covers"), session_rx)?;
 
     tokio::spawn(state::run(
-        DEVICE_NAME.into(),
+        supervisor::DEVICE_NAME.into(),
         events,
         inputs_tx.clone(),
         inputs_rx,
@@ -194,22 +176,17 @@ async fn run() -> Result<()> {
         covers,
     ));
 
-    let connect_config = ConnectConfig {
-        name: DEVICE_NAME.into(),
-        device_type: DeviceType::Computer,
-        ..Default::default()
-    };
-    let (spirc, spirc_task) = Spirc::new(
-        connect_config,
-        session.clone(),
-        credentials,
-        player.clone(),
-        mixer.clone(),
-    )
-    .await?;
-    let spirc = Arc::new(spirc);
-    let _ = inputs_tx.send(state::Input::Connected(true));
-    tracing::info!("Connect device \"{DEVICE_NAME}\" is up");
+    // The socket comes up before Spotify does, so clients can connect and
+    // show "connecting" or "signed out" rather than "not running".
+    let listener = ipc::bind(&omarchy_rust_spotify_proto::socket_path())?;
+    tokio::spawn({
+        let (state, updates, cmds) = (snapshot_rx.clone(), updates_tx.clone(), cmds_tx.clone());
+        async move {
+            if let Err(e) = ipc::run(listener, state, updates, cmds).await {
+                tracing::error!("IPC stopped: {e:#}");
+            }
+        }
+    });
 
     let mpris_latency = Arc::new(latency::Histogram::new("event->MPRIS"));
     tokio::spawn({
@@ -221,36 +198,47 @@ async fn run() -> Result<()> {
         }
     });
 
-    let socket = omarchy_rust_spotify_proto::socket_path();
     tokio::spawn({
-        let (state, updates, cmds) = (snapshot_rx.clone(), updates_tx.clone(), cmds_tx.clone());
-        async move {
-            if let Err(e) = ipc::run(&socket, state, updates, cmds).await {
-                tracing::error!("IPC stopped: {e:#}");
-            }
-        }
-    });
-
-    tokio::spawn({
-        let (spirc, state) = (spirc.clone(), snapshot_rx.clone());
+        let state = snapshot_rx.clone();
+        let spirc = spirc_rx.clone();
         async move {
             while let Some(cmd) = cmds_rx.recv().await {
                 tracing::debug!(?cmd, "command");
-                if let Err(e) = execute(&spirc, &state, &interrupt, cmd).await {
+                let current = spirc.borrow().clone();
+                if let Err(e) = execute(current.as_deref(), &state, &interrupt, cmd).await {
                     tracing::warn!("command failed: {e:#}");
                 }
             }
         }
     });
 
+    tokio::spawn(
+        supervisor::Supervisor {
+            session_config,
+            cache,
+            secrets,
+            player,
+            mixer,
+            inputs: inputs_tx,
+            spirc: spirc_tx,
+            session: session_tx,
+            credentials_changed,
+        }
+        .run(),
+    );
+
+    supervisor::notify_systemd("READY=1");
+
     let mut sigterm = signal(SignalKind::terminate())?;
     tokio::select! {
-        _ = spirc_task => bail!("Spirc stopped unexpectedly"),
         _ = tokio::signal::ctrl_c() => {}
         _ = sigterm.recv() => {}
     }
     tracing::info!("shutting down");
-    let _ = spirc.shutdown();
+    supervisor::notify_systemd("STOPPING=1");
+    if let Some(spirc) = spirc_rx.borrow().as_ref() {
+        let _ = spirc.shutdown();
+    }
     let _ = std::fs::remove_file(omarchy_rust_spotify_proto::socket_path());
     Ok(())
 }

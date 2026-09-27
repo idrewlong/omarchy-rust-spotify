@@ -13,12 +13,9 @@ use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::state::Update;
 
-pub async fn run(
-    path: &Path,
-    state: watch::Receiver<(u64, PlayerState)>,
-    updates: broadcast::Sender<Arc<Update>>,
-    cmds: mpsc::UnboundedSender<Command>,
-) -> anyhow::Result<()> {
+/// Bind the socket (0700 directory, 0600 socket). Done before anything else
+/// so the daemon only reports ready once clients can connect.
+pub fn bind(path: &Path) -> anyhow::Result<UnixListener> {
     if let Some(dir) = path.parent() {
         std::fs::DirBuilder::new()
             .recursive(true)
@@ -30,7 +27,15 @@ pub async fn run(
     let listener = UnixListener::bind(path)?;
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
     tracing::info!("IPC: {}", path.display());
+    Ok(listener)
+}
 
+pub async fn run(
+    listener: UnixListener,
+    state: watch::Receiver<(u64, PlayerState)>,
+    updates: broadcast::Sender<Arc<Update>>,
+    cmds: mpsc::UnboundedSender<Command>,
+) -> anyhow::Result<()> {
     // SAFETY: getuid cannot fail.
     let uid = unsafe { libc::getuid() };
     loop {

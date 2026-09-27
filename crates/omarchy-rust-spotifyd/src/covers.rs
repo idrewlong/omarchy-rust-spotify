@@ -5,18 +5,19 @@ use std::path::PathBuf;
 
 use bytes::Bytes;
 use librespot_core::Session;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use crate::state::Input;
 
 #[derive(Clone)]
 pub struct Covers {
     dir: PathBuf,
-    session: Session,
+    /// The current session; it's replaced on reconnect.
+    session: watch::Receiver<Session>,
 }
 
 impl Covers {
-    pub fn new(dir: PathBuf, session: Session) -> std::io::Result<Self> {
+    pub fn new(dir: PathBuf, session: watch::Receiver<Session>) -> std::io::Result<Self> {
         std::fs::create_dir_all(&dir)?;
         Ok(Self { dir, session })
     }
@@ -39,7 +40,7 @@ impl Covers {
         let Some(path) = self.path_for(&url) else {
             return;
         };
-        let session = self.session.clone();
+        let session = self.session.borrow().clone();
         tokio::spawn(async move {
             let result = async {
                 let req = http::Request::get(&url).body(Bytes::new())?;

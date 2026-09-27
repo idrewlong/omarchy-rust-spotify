@@ -6,7 +6,9 @@ use std::sync::Arc;
 
 use librespot_metadata::audio::{AudioItem, UniqueFields};
 use librespot_playback::player::{PlayerEvent, PlayerEventChannel};
-use omarchy_rust_spotify_proto::{PlayerState, Repeat, Status, Track, diff, mono_ns, unix_ms};
+use omarchy_rust_spotify_proto::{
+    DaemonError, PlayerState, Repeat, Status, Track, diff, mono_ns, unix_ms,
+};
 use serde_json::{Map, Value};
 use tokio::sync::{broadcast, mpsc, watch};
 
@@ -20,6 +22,8 @@ pub enum Input {
     },
     /// The session came up (Spirc started) or went away.
     Connected(bool),
+    /// Set or clear the reason playback can't happen.
+    Error(Option<DaemonError>),
 }
 
 /// One published change.
@@ -169,10 +173,14 @@ pub async fn run(
                     }
                     Input::Connected(up) => {
                         state.connected = up;
-                        if !up {
+                        if up {
+                            state.error = None;
+                        } else {
                             state.active = false;
+                            state.status = Status::Stopped;
                         }
                     }
+                    Input::Error(error) => state.error = error,
                 }
                 (received, old, Effects::default())
             }

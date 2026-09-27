@@ -13,7 +13,7 @@ use std::os::unix::net::UnixStream;
 
 use anyhow::{Context, Result, bail};
 use omarchy_rust_spotify_proto::{
-    ClientMsg, Command, PlayerState, Repeat, ServerMsg, Status, mono_ns, socket_path,
+    ClientMsg, Command, DaemonError, PlayerState, Repeat, ServerMsg, Status, mono_ns, socket_path,
 };
 
 struct Client {
@@ -140,6 +140,14 @@ fn status() -> Result<()> {
             " (not the active device)"
         }
     );
+    if let Some(e) = s.error {
+        let why = match e {
+            DaemonError::SignedOut => "not signed in: run `omarchy-rust-spotify login`",
+            DaemonError::PremiumRequired => "Spotify Premium is required for playback",
+            DaemonError::Offline => "can't reach Spotify (retrying)",
+        };
+        println!("error:   {why}");
+    }
     if let Some(t) = &s.track {
         println!("track:   {} - {}", t.name, t.artists.join(", "));
         println!("album:   {}", t.album);

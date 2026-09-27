@@ -57,6 +57,19 @@ pub enum Repeat {
     Track,
 }
 
+/// Why the daemon can't play right now. `None` in `PlayerState::error` means
+/// all is well.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DaemonError {
+    /// No saved login, or Spotify rejected it: run `omarchy-rust-spotify login`.
+    SignedOut,
+    /// Spotify refuses playback on free accounts.
+    PremiumRequired,
+    /// Can't reach Spotify; the daemon retries with backoff.
+    Offline,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct Track {
     pub uri: String,
@@ -86,6 +99,7 @@ pub struct PlayerState {
     /// 0..=100
     pub volume: u8,
     pub device_name: String,
+    pub error: Option<DaemonError>,
 }
 
 impl PlayerState {
