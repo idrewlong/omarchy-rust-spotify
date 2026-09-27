@@ -29,5 +29,6 @@ LUA
 fi
 
 systemctl --user daemon-reload
+systemctl --user enable --quiet omarchy-rust-spotifyd.service
 systemctl --user restart omarchy-rust-spotifyd.service
 systemctl --user --no-pager status omarchy-rust-spotifyd.service | head -5
