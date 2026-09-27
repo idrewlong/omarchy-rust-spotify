@@ -89,6 +89,8 @@ const OAUTH_SCOPES: &[&str] = &[
 /// Everything the command executor needs besides the command.
 struct Ctx {
     state: watch::Receiver<(u64, PlayerState)>,
+    /// The audio player itself, for when Spirc isn't taking commands.
+    player: Arc<Player>,
     spirc: watch::Receiver<Option<Arc<Spirc>>>,
     interrupt: sink::Interrupt,
     secrets: secrets::Secrets,
@@ -99,6 +101,9 @@ struct Ctx {
     library: Arc<library::Library>,
     /// The sign-in in progress; a new one replaces (aborts) it.
     login: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+    /// Counts commands, so a delayed action can tell whether the user has
+    /// asked for something else since.
+    commands: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Sign in: publish the authorize URL for the client to open, wait for the
@@ -202,10 +207,24 @@ fn play_in(
 }
 
 async fn execute(ctx: &Ctx, cmd: Command) -> Result<()> {
+    let this_command = ctx
+        .commands
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+        + 1;
     match cmd {
         // The system volume: works even when not connected to Spotify.
         Command::Volume { pct } => {
             sysvol::set(pct).await;
+            return Ok(());
+        }
+        // Liked Songs is the library's, not the player's: no Connect
+        // session needed.
+        Command::Like { on, uri } => {
+            let uri = uri
+                .or_else(|| ctx.state.borrow().1.track.as_ref().map(|t| t.uri.clone()))
+                .ok_or_else(|| anyhow::anyhow!("nothing is playing"))?;
+            ctx.library.set_liked(&uri, on).await?;
+            let _ = ctx.inputs.send(state::Input::Liked { uri, liked: on });
             return Ok(());
         }
         Command::Logout => {
@@ -238,14 +257,20 @@ async fn execute(ctx: &Ctx, cmd: Command) -> Result<()> {
         // The transfer keeps the old device's play/pause state, so playback
         // taken over from a paused session would arrive paused. The user
         // pressed play: start it once the track has landed here.
+        // Unless another command (a pause, say) comes in first: then the
+        // user's latest wish stands.
         let (mut state, spirc) = (ctx.state.clone(), ctx.spirc.borrow().clone());
+        let commands = ctx.commands.clone();
         tokio::spawn(async move {
             let landed = tokio::time::timeout(
                 std::time::Duration::from_secs(30),
                 state.wait_for(|(_, s)| s.active && s.track.is_some()),
             )
-            .await;
-            if let (Ok(Ok(_)), Some(spirc)) = (landed, spirc) {
+            .await
+            .map(|r| r.map(|_| ()));
+            let still_latest = commands.load(std::sync::atomic::Ordering::SeqCst) == this_command;
+            let playing = state.borrow().1.status == omarchy_rust_spotify_proto::Status::Playing;
+            if let (Ok(Ok(_)), Some(spirc), true, false) = (landed, spirc, still_latest, playing) {
                 let _ = spirc.play();
             }
         });
@@ -261,6 +286,11 @@ async fn execute(ctx: &Ctx, cmd: Command) -> Result<()> {
     if cuts_audio {
         interrupt.fire();
     }
+    let cmd_kind = match cmd {
+        Command::Pause => Kind::Pause,
+        Command::PlayPause => Kind::PlayPause,
+        _ => Kind::Other,
+    };
     match cmd {
         Command::Play => spirc.play()?,
         Command::Pause => spirc.pause()?,
@@ -273,7 +303,9 @@ async fn execute(ctx: &Ctx, cmd: Command) -> Result<()> {
             spirc.repeat(mode != Repeat::Off)?;
             spirc.repeat_track(mode == Repeat::Track)?;
         }
-        Command::Volume { .. } => unreachable!("handled before needing Spotify"),
+        Command::Volume { .. } | Command::Like { .. } => {
+            unreachable!("handled before needing Spotify")
+        }
         Command::PlayIn { context, track } => {
             let username = ctx.session.borrow().username();
             let played = if context.starts_with("spotify:track:") {
@@ -290,7 +322,46 @@ async fn execute(ctx: &Ctx, cmd: Command) -> Result<()> {
             unreachable!("handled elsewhere")
         }
     }
+    // A pause that sticks: right after taking over playback, Spirc drops
+    // commands for a few seconds (Spotify's command channel reconnects). If
+    // it's still playing a moment later and nothing else was asked for
+    // since, pause the player itself.
+    let meant_pause = match cmd_kind {
+        Kind::Pause => true,
+        Kind::PlayPause => playing,
+        Kind::Other => false,
+    };
+    if meant_pause {
+        let (state, player, commands) =
+            (ctx.state.clone(), ctx.player.clone(), ctx.commands.clone());
+        tokio::spawn(async move {
+            // Watch for ~8 s: a takeover can start playback a few seconds
+            // after the pause arrived.
+            for _ in 0..8 {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                if commands.load(std::sync::atomic::Ordering::SeqCst) != this_command {
+                    return;
+                }
+                if state.borrow().1.status != omarchy_rust_spotify_proto::Status::Playing {
+                    continue;
+                }
+                // Spirc drops commands while Spotify's command channel
+                // reconnects, which it does right after every takeover:
+                // pause the player directly (Spirc follows its events).
+                tracing::info!("pause didn't take: pausing the player directly");
+                player.pause();
+            }
+        });
+    }
     Ok(())
+}
+
+/// What kind of command, for the pause follow-up (the command itself is
+/// consumed by the time it's needed).
+enum Kind {
+    Pause,
+    PlayPause,
+    Other,
 }
 
 fn main() -> Result<()> {
@@ -381,6 +452,7 @@ async fn run() -> Result<()> {
     let (cmds_tx, mut cmds_rx) = mpsc::unbounded_channel::<Command>();
     let (session_tx, session_rx) = watch::channel(session);
     let (spirc_tx, spirc_rx) = watch::channel::<Option<Arc<Spirc>>>(None);
+    let commands: Arc<std::sync::atomic::AtomicU64> = Default::default();
     let credentials_changed = Arc::new(Notify::new());
     let covers = covers::Covers::new(dir.join("covers"), session_rx.clone())?;
 
@@ -403,6 +475,31 @@ async fn run() -> Result<()> {
         &dir,
     ));
     let ipc_library = library.clone();
+    // Whether each new track is in Liked Songs, for the heart.
+    tokio::spawn({
+        let (mut state, library, inputs) =
+            (snapshot_rx.clone(), library.clone(), inputs_tx.clone());
+        async move {
+            let mut last: Option<String> = None;
+            while state.changed().await.is_ok() {
+                let uri = state.borrow().1.track.as_ref().map(|t| t.uri.clone());
+                if uri == last {
+                    continue;
+                }
+                last = uri.clone();
+                let Some(uri) = uri else { continue };
+                let (library, inputs) = (library.clone(), inputs.clone());
+                tokio::spawn(async move {
+                    match library.is_liked(&uri).await {
+                        Ok(liked) => {
+                            let _ = inputs.send(state::Input::Liked { uri, liked });
+                        }
+                        Err(e) => tracing::debug!("liked check for {uri}: {e:#}"),
+                    }
+                });
+            }
+        }
+    });
     let listener = ipc::bind(&omarchy_rust_spotify_proto::socket_path())?;
     tokio::spawn({
         let (state, updates, cmds) = (snapshot_rx.clone(), updates_tx.clone(), cmds_tx.clone());
@@ -429,6 +526,7 @@ async fn run() -> Result<()> {
 
     let ctx = Arc::new(Ctx {
         state: snapshot_rx.clone(),
+        player: player.clone(),
         spirc: spirc_rx.clone(),
         interrupt,
         secrets: secrets.clone(),
@@ -438,6 +536,7 @@ async fn run() -> Result<()> {
         inputs: inputs_tx.clone(),
         library: library.clone(),
         login: Default::default(),
+        commands: commands.clone(),
     });
     tokio::spawn(async move {
         while let Some(cmd) = cmds_rx.recv().await {
@@ -488,6 +587,7 @@ async fn run() -> Result<()> {
             credentials_changed,
             config: config_rx.clone(),
             state: snapshot_rx.clone(),
+            commands: commands.clone(),
         }
         .run(),
     );

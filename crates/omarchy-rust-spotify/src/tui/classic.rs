@@ -206,8 +206,17 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
             Repeat::Track => "repeat one",
         };
         let on = |b: bool| if b { p.accent } else { p.muted };
+        let liked = s.track.as_ref().and_then(|t| t.liked);
         let mut spans = vec![
             Span::styled(play, Style::new().fg(p.fg)),
+            Span::styled(
+                match liked {
+                    Some(true) => "   ♥",
+                    Some(false) => "   ♡",
+                    None => "",
+                },
+                Style::new().fg(on(liked == Some(true))),
+            ),
             Span::styled("   shuffle", Style::new().fg(on(s.shuffle))),
             Span::styled(
                 format!("   {repeat}"),
@@ -218,7 +227,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         ];
         // Drop the least important readouts (device, then volume) rather
         // than cut one off mid-word.
-        while spans.len() > 3
+        while spans.len() > 4
             && spans.iter().map(|s| s.width()).sum::<usize>() > rows[5].width as usize
         {
             spans.pop();

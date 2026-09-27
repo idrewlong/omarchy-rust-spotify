@@ -6,7 +6,7 @@ import qs.Ui
 
 // The music icon for omarchy-rust-spotify. Hover it for a mini player
 // (cover, track, progress, shuffle / previous / play-pause / next /
-// repeat); click it to open the full player; middle-click toggles
+// repeat / like); click it to open the full player; middle-click toggles
 // playback; the wheel skips.
 //
 // Everything comes from the daemon's socket (the same NDJSON protocol as
@@ -421,6 +421,19 @@ BarWidget {
             const next = { off: "context", context: "track", track: "off" }
             root.send({ cmd: "repeat", mode: next[root.st.repeat || "off"] })
           }
+        }
+
+        // Like: in Liked Songs or not (known a moment after a track starts).
+        Button {
+          readonly property bool liked: !!(root.track && root.track.liked)
+          iconText: liked ? "󰋑" : "󰋕"
+          selected: liked
+          foreground: root.bar.foreground
+          horizontalPadding: Style.spacing.controlPaddingX
+          verticalPadding: Style.spacing.controlPaddingY
+          enabled: root.online && root.track !== null
+          opacity: enabled ? (liked ? 1.0 : 0.55) : 0.25
+          onClicked: root.send({ cmd: "like", on: !liked })
         }
       }
     }

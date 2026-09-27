@@ -100,6 +100,14 @@ fn parse_cmd(args: &[String]) -> Result<Command> {
             "play" => Command::Play,
             "pause" => Command::Pause,
             "play-pause" | "toggle" => Command::PlayPause,
+            "like" => Command::Like {
+                on: true,
+                uri: args.get(1).cloned(),
+            },
+            "unlike" => Command::Like {
+                on: false,
+                uri: args.get(1).cloned(),
+            },
             "next" => Command::Next,
             "prev" | "previous" => Command::Prev,
             "seek" => Command::Seek {
@@ -161,6 +169,9 @@ fn status() -> Result<()> {
     if let Some(t) = &s.track {
         println!("track:   {} - {}", t.name, t.artists.join(", "));
         println!("album:   {}", t.album);
+        if let Some(liked) = t.liked {
+            println!("liked:   {}", if liked { "yes" } else { "no" });
+        }
         println!(
             "time:    {} / {}",
             fmt_ms(s.position_now_ms()),

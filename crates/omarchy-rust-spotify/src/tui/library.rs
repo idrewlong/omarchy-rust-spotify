@@ -1020,6 +1020,14 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
             bar_in.y + 3,
             Line::from(vec![
                 Span::styled(play, Style::new().fg(p.fg)),
+                Span::styled(
+                    match s.track.as_ref().and_then(|t| t.liked) {
+                        Some(true) => "   ♥ liked",
+                        Some(false) => "   ♡ like (f)",
+                        None => "",
+                    },
+                    Style::new().fg(on(s.track.as_ref().and_then(|t| t.liked) == Some(true))),
+                ),
                 Span::styled("   shuffle", Style::new().fg(on(s.shuffle))),
                 Span::styled(
                     match s.repeat {

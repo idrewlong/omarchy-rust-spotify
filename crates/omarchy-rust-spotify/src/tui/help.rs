@@ -14,6 +14,7 @@ fn sections(skin: Skin) -> Vec<(&'static str, Vec<(&'static str, &'static str)>)
             ("n  p", "next / previous track"),
             ("←  →", "back / forward 10 seconds"),
             ("s  r", "shuffle / repeat"),
+            ("f", "like / unlike"),
             ("+  -", "volume"),
         ],
     )];

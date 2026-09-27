@@ -30,6 +30,11 @@ pub enum Input {
     DeviceName(String),
     /// The system (PipeWire default output) volume, which is the volume.
     SystemVolume(u8),
+    /// Whether a track is in Liked Songs.
+    Liked {
+        uri: String,
+        liked: bool,
+    },
 }
 
 /// One published change.
@@ -131,6 +136,7 @@ fn track_from(item: &AudioItem) -> Track {
         explicit: item.is_explicit,
         cover_url,
         cover_path: None,
+        liked: None,
     }
 }
 
@@ -170,6 +176,11 @@ pub async fn run(
                 let received = mono_ns();
                 let old = state.clone();
                 match input {
+                    Input::Liked { uri, liked } => {
+                        if let Some(t) = state.track.as_mut().filter(|t| t.uri == uri) {
+                            t.liked = Some(liked);
+                        }
+                    }
                     Input::CoverReady { uri, path } => {
                         if let Some(t) = state.track.as_mut().filter(|t| t.uri == uri) {
                             t.cover_path = Some(path);

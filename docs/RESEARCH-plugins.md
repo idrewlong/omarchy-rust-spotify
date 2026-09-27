@@ -109,8 +109,9 @@ Across the rest of the field:
 2. ~~**Onboarding without a developer app.**~~ Done (0.1.1): playlists
    from the rootlist, Liked Songs and song search from Spotify's context
    service, playlist contents from metadata. The app is an optional extra.
-3. **Library parity with the leader:** queue view and editing, like/unlike
-   everywhere (incl. the bar card), artist and album pages, playlist
+3. **Library parity with the leader:** queue view and editing, ~~like/unlike
+   everywhere (incl. the bar card)~~ (done: `f`, ♥ in the bar card, through
+   Spotify's collection service, no app needed), artist and album pages, playlist
    add/remove, Spotify Connect device switching (incl. Sonos via Connect,
    like ciryon's), podcasts and audiobooks (ninepointlabs).
 4. ~~**Keyboard discoverability**~~ Done: `?` shows the keys that work
@@ -118,7 +119,8 @@ Across the rest of the field:
 5. ~~**Lyrics**~~ Done: a Lyrics skin (synced, click a line to seek) and
    `omarchy-rust-spotify lyrics`, from LRCLIB. (Spotify's own lyrics
    service 404s for librespot sessions.)
-6. **The bar card:** like button, volume, device picker, a mini visualizer.
+6. **The bar card:** ~~like button~~ (done), volume, device picker, a mini
+   visualizer.
 7. **Polish they lack:** multi-monitor-safe bar widget, settings that
    persist (ours live in tui.toml/config.toml already), clear errors for
    free accounts and taken ports (we have both; keep tests on them).

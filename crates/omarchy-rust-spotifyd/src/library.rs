@@ -89,6 +89,49 @@ fn needs_app(e: &anyhow::Error) -> bool {
     e.downcast_ref::<NeedsApp>().is_some()
 }
 
+/// The collection service's WriteRequest (collection2v2.proto, which
+/// librespot doesn't ship), encoded by hand: username = 1, set = 2,
+/// items = 3 (uri = 1, added_at = 2, is_removed = 3), client_update_id = 4.
+fn collection_write(user: &str, uri: &str, on: bool) -> Vec<u8> {
+    fn varint(out: &mut Vec<u8>, mut v: u64) {
+        while v >= 0x80 {
+            out.push((v as u8 & 0x7f) | 0x80);
+            v >>= 7;
+        }
+        out.push(v as u8);
+    }
+    fn bytes_field(out: &mut Vec<u8>, field: u64, b: &[u8]) {
+        varint(out, field << 3 | 2);
+        varint(out, b.len() as u64);
+        out.extend_from_slice(b);
+    }
+    fn varint_field(out: &mut Vec<u8>, field: u64, v: u64) {
+        varint(out, field << 3);
+        varint(out, v);
+    }
+    let mut item = Vec::new();
+    bytes_field(&mut item, 1, uri.as_bytes());
+    varint_field(
+        &mut item,
+        2,
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs()),
+    );
+    if !on {
+        varint_field(&mut item, 3, 1);
+    }
+    let mut out = Vec::new();
+    bytes_field(&mut out, 1, user.as_bytes());
+    bytes_field(&mut out, 2, b"collection");
+    bytes_field(&mut out, 3, &item);
+    let id: String = (0..16)
+        .map(|_| format!("{:02x}", rand::random::<u8>()))
+        .collect();
+    bytes_field(&mut out, 4, id.as_bytes());
+    out
+}
+
 /// A playlist URI in today's form: the rootlist still says
 /// spotify:user:NAME:playlist:ID for older ones.
 fn playlist_uri(uri: &str) -> Option<String> {
@@ -541,6 +584,54 @@ impl Library {
         Ok(answer)
     }
 
+    /// Whether `uri` is in the user's Liked Songs (the collection, as
+    /// fetched for listing it; cached briefly).
+    pub async fn is_liked(&self, uri: &str) -> Result<bool> {
+        let collection = format!("spotify:user:{}:collection", self.session().username());
+        Ok(self
+            .context_tracks(&collection, 100_000)
+            .await?
+            .iter()
+            .any(|u| u == uri))
+    }
+
+    /// Adds `uri` to Liked Songs, or removes it, through Spotify's
+    /// collection service (works without an app, and needs no Web API
+    /// write permission).
+    pub async fn set_liked(&self, uri: &str, on: bool) -> Result<()> {
+        let session = self.session();
+        let user = session.username();
+        let body = collection_write(&user, uri, on);
+        let mut headers = http::HeaderMap::new();
+        headers.insert(
+            http::header::CONTENT_TYPE,
+            http::HeaderValue::from_static("application/vnd.collection-v2.spotify.proto"),
+        );
+        session
+            .spclient()
+            .request(
+                &http::Method::POST,
+                "/collection/v2/write",
+                Some(headers),
+                Some(&body),
+            )
+            .await?;
+        // Keep the cached collection in step, and let Liked Songs lists
+        // refetch.
+        let collection = format!("spotify:user:{user}:collection");
+        if let Some((_, uris)) = self.contexts.lock().unwrap().get_mut(&collection) {
+            uris.retain(|u| u != uri);
+            if on {
+                uris.insert(0, uri.to_string());
+            }
+        }
+        self.cache
+            .lock()
+            .unwrap()
+            .retain(|k, _| !k.contains("\"liked\""));
+        Ok(())
+    }
+
     fn session(&self) -> Session {
         self.session.borrow().clone()
     }
@@ -854,6 +945,21 @@ impl Library {
 #[cfg(test)]
 mod tests {
     use super::{lyrics_json, parse_utc_ms};
+
+    #[test]
+    fn encodes_collection_writes() {
+        let add = super::collection_write("me", "spotify:track:x", true);
+        // username, set, then the item: uri, added_at, and no is_removed.
+        assert_eq!(&add[..4], b"\x0a\x02me");
+        assert_eq!(&add[4..16], b"\x12\x0acollection");
+        let item_len = add[17] as usize;
+        let item = &add[18..18 + item_len];
+        assert_eq!(&item[..17], b"\x0a\x0fspotify:track:x");
+        assert!(!item.contains(&0x18), "no is_removed when adding");
+        let remove = super::collection_write("me", "spotify:track:x", false);
+        let item = &remove[18..18 + remove[17] as usize];
+        assert_eq!(&item[item.len() - 2..], b"\x18\x01");
+    }
 
     #[test]
     fn reads_lrc_lines() {

@@ -769,6 +769,11 @@ fn key_command(app: &mut App, code: KeyCode, mods: KeyModifiers) -> Option<Optio
             ms: s.position_now_ms().saturating_sub(10_000),
         }),
         KeyCode::Char('s') => Some(Command::Shuffle { on: !s.shuffle }),
+        // f: like (add to Liked Songs) or unlike what's playing.
+        KeyCode::Char('f') if s.track.is_some() => Some(Command::Like {
+            on: s.track.as_ref().and_then(|t| t.liked) != Some(true),
+            uri: None,
+        }),
         KeyCode::Char('r') => Some(Command::Repeat {
             mode: match s.repeat {
                 Repeat::Off => Repeat::Context,

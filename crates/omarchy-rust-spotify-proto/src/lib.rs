@@ -82,6 +82,10 @@ pub struct Track {
     pub cover_url: Option<String>,
     /// Local file once cached; clients should prefer it.
     pub cover_path: Option<String>,
+    /// In the user's Liked Songs (None until known, shortly after the
+    /// track starts).
+    #[serde(default)]
+    pub liked: Option<bool>,
 }
 
 /// The whole player state. Position is not streamed: clients extrapolate
@@ -243,6 +247,13 @@ pub enum Command {
     /// `Login`. A new `client_id` is saved to config.toml.
     LoginApp {
         client_id: Option<String>,
+    },
+    /// Add a track to Liked Songs (`on`), or take it out: `uri`, or what's
+    /// playing.
+    Like {
+        on: bool,
+        #[serde(default)]
+        uri: Option<String>,
     },
     /// Play `context` ("liked", or a playlist/album/artist URI), starting
     /// at `track` if given. A bare track URI as context plays just it.

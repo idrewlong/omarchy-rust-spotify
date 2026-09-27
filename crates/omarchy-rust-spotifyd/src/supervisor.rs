@@ -36,6 +36,9 @@ pub struct Supervisor {
     pub credentials_changed: Arc<Notify>,
     pub config: watch::Receiver<Config>,
     pub state: watch::Receiver<(u64, PlayerState)>,
+    /// The executor's command count: resuming stands aside once the user
+    /// has asked for anything.
+    pub commands: Arc<std::sync::atomic::AtomicU64>,
 }
 
 /// Written at shutdown when this device was playing, so a restart (an
@@ -56,7 +59,12 @@ pub fn mark_resume(state: &PlayerState) {
 
 /// Take back the playback we had before a restart: a Connect transfer to
 /// ourselves brings the track and position (paused), then play it.
-async fn resume(spirc: Arc<Spirc>, mut state: watch::Receiver<(u64, PlayerState)>) {
+async fn resume(
+    spirc: Arc<Spirc>,
+    mut state: watch::Receiver<(u64, PlayerState)>,
+    commands: Arc<std::sync::atomic::AtomicU64>,
+) {
+    let before = commands.load(std::sync::atomic::Ordering::SeqCst);
     let marker = resume_marker();
     let fresh = std::fs::read_to_string(&marker)
         .ok()
@@ -84,7 +92,9 @@ async fn resume(spirc: Arc<Spirc>, mut state: watch::Receiver<(u64, PlayerState)
         }
     })
     .await;
-    if ready.is_ok() && state.borrow().1.status != Status::Playing {
+    // Not if the user has pressed anything since (a pause, most likely).
+    let untouched = commands.load(std::sync::atomic::Ordering::SeqCst) == before;
+    if ready.is_ok() && untouched && state.borrow().1.status != Status::Playing {
         let _ = spirc.play();
     }
 }
@@ -154,7 +164,11 @@ impl Supervisor {
                     let spirc = Arc::new(spirc);
                     let _ = self.spirc.send(Some(spirc.clone()));
                     let _ = self.inputs.send(Input::Connected(true));
-                    tokio::spawn(resume(spirc.clone(), self.state.clone()));
+                    tokio::spawn(resume(
+                        spirc.clone(),
+                        self.state.clone(),
+                        self.commands.clone(),
+                    ));
                     tracing::info!("Connect device \"{device_name}\" is up");
 
                     // A new device name needs a new Connect registration:
