@@ -7,7 +7,7 @@
 
 use ratatui::buffer::Buffer;
 
-use super::paint::wrap;
+use super::paint::{centered_width, width, wrap};
 use super::*;
 
 const FACE: Color = Color::Rgb(0xd4, 0xd0, 0xc8);
@@ -67,7 +67,7 @@ fn button(
     fill(buf, r, FACE);
     // A latched toggle (shuffle/repeat on) is drawn pressed, as Win32 did.
     bevel(buf, r, !on, FACE);
-    let w = label.chars().count() as u16;
+    let w = width(label);
     let x = r.x + r.width.saturating_sub(w) / 2 + if on { 1 } else { 0 };
     let y = r.y + r.height / 2;
     text(
@@ -379,7 +379,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     };
     // (gap before, width, label, latched, action)
     let specs: [(u16, u16, &str, bool, Hit); 6] = [
-        (0, 6, "⏮", false, Hit::Cmd(Command::Prev)),
+        (0, 6, "◀◀", false, Hit::Cmd(Command::Prev)),
         (
             1,
             8,
@@ -388,7 +388,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
             Hit::Cmd(Command::PlayPause),
         ),
         (1, 6, "■", false, Hit::Cmd(Command::Pause)),
-        (1, 6, "⏭", false, Hit::Cmd(Command::Next)),
+        (1, 6, "▶▶", false, Hit::Cmd(Command::Next)),
         (
             3,
             11,
@@ -407,6 +407,11 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     let mut bx = inner.x + 2;
     for (gap, w, label, on, hit) in specs {
         bx += gap;
+        let w = centered_width(w, label);
+        // In a narrow window, drop the buttons that don't fit.
+        if bx + w > inner.right().saturating_sub(1) {
+            break;
+        }
         let r = Rect {
             x: bx,
             y: by,

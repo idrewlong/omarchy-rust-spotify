@@ -6,7 +6,7 @@
 use ratatui::buffer::Buffer;
 
 use super::library::{ListStyle, columns, draw_list, draw_sidebar};
-use super::paint::{fill, lerp, rgb, text};
+use super::paint::{fill, lerp, rgb, text, width};
 use super::*;
 
 const TOP_A: u32 = 0x2c2c2c;
@@ -175,45 +175,36 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     }
     let cy = bar.y + 2;
     let mid = bar.x + bar.width / 2;
-    let chrome = |bg: u32| Style::new().fg(rgb(CHROME_TEXT)).bg(rgb(bg));
+    let chrome = || Style::new().fg(rgb(CHROME_TEXT));
     let playing = s.status == Status::Playing;
-    // The big round button, glowing blue.
+    // The big round button: a glowing ring on the gloss, the glyph dead
+    // centre (a 1-cell glyph in 5 inner cells). No fill: a filled middle
+    // row pokes out past the ring's rounded corners.
     let play = Rect {
         x: mid - 3,
         y: bar.y + 1,
         width: 7,
         height: 3,
     };
+    let ring = Style::new().fg(rgb(GLOW));
+    text(buf, play.x, play.y, 7, "╭─────╮", ring);
+    text(buf, play.x, play.y + 1, 1, "│", ring);
+    text(buf, play.right() - 1, play.y + 1, 1, "│", ring);
+    text(buf, play.x, play.y + 2, 7, "╰─────╯", ring);
     text(
         buf,
-        play.x,
-        play.y,
-        7,
-        "╭─────╮",
-        Style::new().fg(rgb(GLOW)).bg(rgb(0x101010)),
-    );
-    text(
-        buf,
-        play.x,
+        mid,
         play.y + 1,
-        7,
-        &format!("│  {}  │", if playing { "⏸ " } else { "▶ " }),
-        Style::new()
-            .fg(rgb(0xffffff))
-            .bg(rgb(GLOW_BG))
-            .add_modifier(Modifier::BOLD),
-    );
-    text(
-        buf,
-        play.x,
-        play.y + 2,
-        7,
-        "╰─────╯",
-        Style::new().fg(rgb(GLOW)).bg(rgb(0x050505)),
+        1,
+        if playing { "⏸" } else { "▶" },
+        Style::new().fg(rgb(0xffffff)).add_modifier(Modifier::BOLD),
     );
     clicks.push((play, Hit::Cmd(Command::PlayPause)));
+    // Stop and previous to the left, next to the right, each two cells off
+    // the ring; shuffle and repeat further out. Styles leave the background
+    // alone so the icons sit on the gloss, not on dark patches.
     for (dx, label, hit) in [
-        (-18i32, "⤮", Hit::Cmd(Command::Shuffle { on: !s.shuffle })),
+        (-16i32, "⤮", Hit::Cmd(Command::Shuffle { on: !s.shuffle })),
         (
             -13,
             "↻",
@@ -225,26 +216,24 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
                 },
             }),
         ),
-        (-8, "■", Hit::Cmd(Command::Pause)),
-        (-5, "⏮", Hit::Cmd(Command::Prev)),
-        (6, "⏭", Hit::Cmd(Command::Next)),
+        (-10, "■", Hit::Cmd(Command::Pause)),
+        (-7, "◀◀", Hit::Cmd(Command::Prev)),
+        (6, "▶▶", Hit::Cmd(Command::Next)),
     ] {
         let x = (mid as i32 + dx) as u16;
         let on = (label == "⤮" && s.shuffle) || (label == "↻" && s.repeat != Repeat::Off);
         let st = if on {
-            Style::new()
-                .fg(rgb(GLOW))
-                .bg(rgb(0x0e0e0e))
-                .add_modifier(Modifier::BOLD)
+            Style::new().fg(rgb(GLOW)).add_modifier(Modifier::BOLD)
         } else {
-            chrome(0x0e0e0e)
+            Style::new().fg(rgb(CHROME_TEXT))
         };
-        text(buf, x, cy, 2, label, st);
+        let lw = width(label);
+        text(buf, x, cy, lw, label, st);
         clicks.push((
             Rect {
-                x,
+                x: x.saturating_sub(1),
                 y: cy,
-                width: 2,
+                width: lw + 2,
                 height: 1,
             },
             hit,
@@ -257,13 +246,9 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     for x in vx..vx + vw {
         buf[(x, cy)]
             .set_symbol("─")
-            .set_fg(rgb(if x <= knob { GLOW } else { 0x4a4a4a }))
-            .set_bg(rgb(0x0e0e0e));
+            .set_fg(rgb(if x <= knob { GLOW } else { 0x4a4a4a }));
     }
-    buf[(knob, cy)]
-        .set_symbol("●")
-        .set_fg(rgb(0xffffff))
-        .set_bg(rgb(0x0e0e0e));
+    buf[(knob, cy)].set_symbol("●").set_fg(rgb(0xffffff));
     clicks.push((
         Rect {
             x: vx,
@@ -274,36 +259,26 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         Hit::Volume,
     ));
     // Now playing at the left.
-    let info_w = (mid - 20).saturating_sub(bar.x + 2);
+    let info_w = (mid - 17).saturating_sub(bar.x + 2);
     match (&s.track, banner(app)) {
-        (_, Some(b)) => text(buf, bar.x + 2, cy, info_w, &b, chrome(0x0e0e0e)),
+        (_, Some(b)) => text(buf, bar.x + 2, cy, info_w, &b, chrome()),
         (Some(t), None) => {
             text(
                 buf,
                 bar.x + 2,
                 bar.y + 1,
-                (mid - 4).saturating_sub(bar.x + 2),
+                (mid - 5).saturating_sub(bar.x + 2),
                 &t.name,
-                Style::new()
-                    .fg(rgb(0xffffff))
-                    .bg(rgb(0x161616))
-                    .add_modifier(Modifier::BOLD),
+                Style::new().fg(rgb(0xffffff)).add_modifier(Modifier::BOLD),
             );
-            text(
-                buf,
-                bar.x + 2,
-                cy,
-                info_w,
-                &t.artists.join(", "),
-                chrome(0x0e0e0e),
-            );
+            text(buf, bar.x + 2, cy, info_w, &t.artists.join(", "), chrome());
             text(
                 buf,
                 bar.x + 2,
                 cy + 1,
                 info_w,
                 &format!("{} / {}", fmt_ms(pos), fmt_ms(dur)),
-                Style::new().fg(rgb(0x8a8a8a)).bg(rgb(0x070707)),
+                Style::new().fg(rgb(0x8a8a8a)),
             );
         }
         (None, None) => {}

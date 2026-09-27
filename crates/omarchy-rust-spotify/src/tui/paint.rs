@@ -115,6 +115,17 @@ pub fn wrap(s: &str, width: usize, lines: usize) -> Vec<String> {
     out
 }
 
+/// Terminal columns `s` takes.
+pub fn width(s: &str) -> u16 {
+    ratatui::text::Span::raw(s).width() as u16
+}
+
+/// `w`, or one wider, so a `label` fits with equal space on each side (an
+/// odd label can't sit dead centre in an even box, and vice versa).
+pub fn centered_width(w: u16, label: &str) -> u16 {
+    w + (w.saturating_sub(width(label)) % 2)
+}
+
 pub fn rgb(hex: u32) -> Color {
     Color::Rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
 }

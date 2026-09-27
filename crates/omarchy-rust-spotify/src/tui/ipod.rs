@@ -481,7 +481,9 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     };
     let r = (wheel_area.height as f64 * ch).min(wheel_area.width as f64 * cw) * 0.46;
     let (wcx, wcy) = (
-        wheel_area.x as f64 + wheel_area.width as f64 / 2.0,
+        // On a cell boundary, so the even-width labels on the vertical axis
+        // (MENU, ▶⏸) sit exactly centred.
+        (wheel_area.x + wheel_area.width / 2) as f64,
         wheel_area.y as f64 + wheel_area.height as f64 / 2.0,
     );
     wheel(buf, wheel_area, wcx, wcy, r, cw, ch);
@@ -503,8 +505,10 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     let ry = r / ch;
     let rx = r / cw;
     label(buf, wcx, wcy - ry * 0.72, "MENU");
-    label(buf, wcx - rx * 0.72, wcy, "⏮");
-    label(buf, wcx + rx * 0.72, wcy, "⏭");
+    // Mirror image positions, so both sit the same distance from the centre.
+    let side = (rx * 0.72).round();
+    label(buf, wcx - side + 0.5, wcy, "⏮");
+    label(buf, wcx + side - 0.5, wcy, "⏭");
     label(buf, wcx, wcy + ry * 0.66, "▶⏸");
     app.ipod.wheel = Wheel {
         cx: wcx,

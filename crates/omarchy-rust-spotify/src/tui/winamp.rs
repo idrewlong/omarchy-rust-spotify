@@ -341,11 +341,12 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     let by = main.y + 8;
     let mut bx = main.x + 2;
     for (label, hit) in [
-        ("⏮", Hit::Cmd(Command::Prev)),
-        ("▶", Hit::Cmd(Command::Play)),
-        ("⏸", Hit::Cmd(Command::Pause)),
-        ("■", Hit::Cmd(Command::Pause)),
-        ("⏭", Hit::Cmd(Command::Next)),
+        // Padded so every button is 5 or 6 wide with its glyph centred.
+        (" ◀◀ ", Hit::Cmd(Command::Prev)),
+        (" ▶ ", Hit::Cmd(Command::Play)),
+        (" ▮▮ ", Hit::Cmd(Command::Pause)),
+        (" ■ ", Hit::Cmd(Command::Pause)),
+        (" ▶▶ ", Hit::Cmd(Command::Next)),
     ] {
         bx += button(buf, &mut clicks, bx, by, label, None, hit);
     }

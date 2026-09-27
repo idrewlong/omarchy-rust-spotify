@@ -8,7 +8,7 @@
 use ratatui::buffer::Buffer;
 
 use super::library::{ListStyle, draw_list, draw_sidebar};
-use super::paint::{bevel, fill, lerp, rgb, text};
+use super::paint::{bevel, centered_width, fill, lerp, rgb, text, width};
 use super::*;
 
 const METAL_A: u32 = 0xcfcfcf;
@@ -60,19 +60,20 @@ fn round_button(
     big: bool,
     hit: Hit,
 ) -> u16 {
-    let w: u16 = if big { 7 } else { 5 };
+    let w: u16 = centered_width(if big { 7 } else { 5 }, glyph);
     let r = Rect {
         x,
         y,
         width: w,
         height: 3,
     };
-    let pad = (w as usize - 2 - glyph.chars().count()) / 2;
+    let gw = width(glyph) as usize;
+    let pad = (w as usize - 2 - gw) / 2;
     let mid = format!(
         "{}{}{}",
         " ".repeat(pad),
         glyph,
-        " ".repeat(w as usize - 2 - pad - glyph.chars().count())
+        " ".repeat(w as usize - 2 - pad - gw)
     );
     // The ring sits on the metal; only the face is filled.
     put(buf, x, y, "╭", BTN_RING);
