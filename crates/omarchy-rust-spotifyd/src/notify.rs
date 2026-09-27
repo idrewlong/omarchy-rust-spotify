@@ -54,7 +54,8 @@ impl Notifier {
                 &(
                     "omarchy-rust-spotify",
                     self.last_id,
-                    "",
+                    // The app icon, shown when there's no cover yet.
+                    "omarchy-rust-spotify",
                     summary,
                     body,
                     Vec::<&str>::new(),

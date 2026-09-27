@@ -14,7 +14,9 @@ rm -f ~/.config/systemd/user/omarchy-rust-spotifyd.service
 systemctl --user daemon-reload
 rm -f ~/.local/bin/omarchy-rust-spotifyd ~/.local/bin/omarchy-rust-spotify ~/.local/bin/omarchy-rust-spotify-viz
 rm -f ~/.local/share/applications/omarchy-rust-spotify.desktop \
-  ~/.local/share/applications/omarchy-rust-spotify-viz.desktop
+  ~/.local/share/applications/omarchy-rust-spotify-viz.desktop \
+  ~/.local/share/icons/hicolor/scalable/apps/omarchy-rust-spotify.svg \
+  ~/.local/share/icons/hicolor/scalable/apps/omarchy-rust-spotify-viz.svg
 bindings=~/.config/hypr/bindings.lua
 if [[ -f $bindings ]]; then
   sed -i '/^-- omarchy-rust-spotify: begin/,/^-- omarchy-rust-spotify: end/d' "$bindings"

@@ -80,6 +80,11 @@ for b in "${bins[@]}"; do
 done
 sed "s|^ExecStart=.*|ExecStart=$HOME/.local/bin/omarchy-rust-spotifyd|" \
   "$dir/packaging/systemd/omarchy-rust-spotifyd.service" > ~/.config/systemd/user/omarchy-rust-spotifyd.service
+# The app icons, where launchers and notifications look them up by name.
+icons=~/.local/share/icons/hicolor/scalable/apps
+mkdir -p "$icons"
+cp "$dir/packaging/icons/omarchy-rust-spotify.svg" "$dir/packaging/icons/omarchy-rust-spotify-viz.svg" "$icons/"
+command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t ~/.local/share/icons/hicolor 2>/dev/null || true
 sed "s|/usr/bin/omarchy-rust-spotify|$HOME/.local/bin/omarchy-rust-spotify|" \
   "$dir/packaging/desktop/omarchy-rust-spotify.desktop" > ~/.local/share/applications/omarchy-rust-spotify.desktop
 sed "s|/usr/bin/omarchy-rust-spotify-viz|$HOME/.local/bin/omarchy-rust-spotify-viz|" \

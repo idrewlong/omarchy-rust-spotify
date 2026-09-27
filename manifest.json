@@ -14,7 +14,7 @@
     "displayName": "Spotify (Rust)",
     "description": "Music icon with a hover mini player; click to open the player",
     "category": "Media",
-    "defaultSection": "right",
+    "defaultSection": "center",
     "allowMultiple": false
   }
 }
