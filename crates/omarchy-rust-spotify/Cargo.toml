@@ -1,0 +1,10 @@
+[package]
+name = "omarchy-rust-spotify"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+omarchy-rust-spotify-proto.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true

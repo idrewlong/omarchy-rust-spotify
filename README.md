@@ -5,7 +5,9 @@ built in Rust on [librespot](https://github.com/librespot-org/librespot).
 It targets Omarchy on Apple Silicon (Asahi Linux, aarch64) first, and x86_64
 too.
 
-**Status: planning.** Nothing is built yet. The full design is in
+**Status: M0 spike done** ([results](docs/bench/m0.md)): the daemon plays
+through PipeWire on Asahi, serves MPRIS and a local socket, and a CLI drives
+it. Not yet usable day to day. The full design is in
 [`docs/PLAN.md`](docs/PLAN.md):
 
 - a background daemon that plays, pauses and skips through librespot
