@@ -19,7 +19,7 @@ use anyhow::{Result, bail};
 use futures_util::{StreamExt, stream};
 use librespot_core::{Session, SpotifyUri};
 use librespot_metadata::{Album, Artist, Metadata, Playlist, Track};
-use omarchy_rust_spotify_proto::{Item, ItemKind, Request, Section, ServerMsg};
+use omarchy_rust_spotify_proto::{Item, ItemKind, PlaylistOrder, Request, Section, ServerMsg};
 use serde_json::Value;
 use tokio::sync::watch;
 
@@ -32,6 +32,32 @@ pub struct Library {
     pub api: WebApi,
     pub session: watch::Receiver<Session>,
     cache: Mutex<HashMap<String, (Instant, Vec<Section>)>>,
+    /// Context URI -> last played (unix ms) on this player, persisted:
+    /// Spotify's recently-played history doesn't include librespot's plays.
+    history: Mutex<HashMap<String, u64>>,
+    history_file: std::path::PathBuf,
+}
+
+/// "2026-09-26T01:51:12.454Z" -> unix ms (UTC, as Spotify sends it).
+fn parse_utc_ms(s: &str) -> Option<u64> {
+    let (date, time) = s.trim_end_matches('Z').split_once('T')?;
+    let mut d = date.split('-').map(|x| x.parse::<i64>());
+    let (y, m, day) = (d.next()?.ok()?, d.next()?.ok()?, d.next()?.ok()?);
+    let mut t = time.split(':');
+    let (hh, mm) = (
+        t.next()?.parse::<i64>().ok()?,
+        t.next()?.parse::<i64>().ok()?,
+    );
+    let secs: f64 = t.next()?.parse().ok()?;
+    // Days from civil (Howard Hinnant's algorithm).
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146097 + doe - 719468;
+    let ms = ((days * 86400 + hh * 3600 + mm * 60) as f64 + secs) * 1000.0;
+    (ms >= 0.0).then_some(ms.round() as u64)
 }
 
 enum Answer {
@@ -180,12 +206,65 @@ fn track_from_meta(t: &Track) -> Option<Item> {
 }
 
 impl Library {
-    pub fn new(api: WebApi, session: watch::Receiver<Session>) -> Self {
+    pub fn new(
+        api: WebApi,
+        session: watch::Receiver<Session>,
+        cache_dir: &std::path::Path,
+    ) -> Self {
+        let history_file = cache_dir.join("history.json");
+        let history = std::fs::read(&history_file)
+            .ok()
+            .and_then(|b| serde_json::from_slice(&b).ok())
+            .unwrap_or_default();
         Self {
             api,
             session,
             cache: Default::default(),
+            history: Mutex::new(history),
+            history_file,
         }
+    }
+
+    /// Remember that `context` started playing here, and drop cached
+    /// playlist orders so the next request reflects it.
+    pub fn note_played(&self, context: &str) {
+        let mut h = self.history.lock().unwrap();
+        h.insert(context.to_string(), omarchy_rust_spotify_proto::unix_ms());
+        if let Ok(json) = serde_json::to_vec(&*h) {
+            let _ = std::fs::write(&self.history_file, json);
+        }
+        self.cache
+            .lock()
+            .unwrap()
+            .retain(|k, _| !k.contains("\"playlists\""));
+    }
+
+    /// Last-played times per context: this player's history merged with
+    /// Spotify's (other apps and devices).
+    async fn recency(&self) -> HashMap<String, u64> {
+        let mut out = self.history.lock().unwrap().clone();
+        if let Ok(Some(json)) = self.api.get("me/player/recently-played?limit=50").await {
+            for item in json
+                .get("items")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let ctx = item
+                    .get("context")
+                    .and_then(|c| c.get("uri"))
+                    .and_then(Value::as_str);
+                let at = item
+                    .get("played_at")
+                    .and_then(Value::as_str)
+                    .and_then(parse_utc_ms);
+                if let (Some(ctx), Some(at)) = (ctx, at) {
+                    let e = out.entry(ctx.to_string()).or_insert(0);
+                    *e = (*e).max(at);
+                }
+            }
+        }
+        out
     }
 
     fn session(&self) -> Session {
@@ -281,7 +360,7 @@ impl Library {
                 ));
             }
 
-            Request::Playlists => {
+            Request::Playlists { order } => {
                 let mut items = Vec::new();
                 let mut offset = 0;
                 // Everything, 50 at a time, up to 500.
@@ -299,6 +378,17 @@ impl Library {
                     offset += 50;
                     if n < 50 || offset >= total(&page).min(500) {
                         break;
+                    }
+                }
+                match order {
+                    PlaylistOrder::Library => {}
+                    PlaylistOrder::Name => items.sort_by_key(|i| i.name.to_lowercase()),
+                    PlaylistOrder::Recent => {
+                        let recency = self.recency().await;
+                        // Stable: never-played playlists keep library order.
+                        items.sort_by_key(|i| {
+                            std::cmp::Reverse(recency.get(&i.uri).copied().unwrap_or(0))
+                        });
                     }
                 }
                 let total = items.len() as u32;
@@ -440,5 +530,21 @@ impl Library {
                 ]
             }
         }))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_utc_ms;
+
+    #[test]
+    fn parses_spotify_timestamps() {
+        // date -u -d 2026-09-26T01:51:12.454Z +%s%3N
+        assert_eq!(
+            parse_utc_ms("2026-09-26T01:51:12.454Z"),
+            Some(1_790_387_472_454)
+        );
+        assert_eq!(parse_utc_ms("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(parse_utc_ms("nonsense"), None);
     }
 }

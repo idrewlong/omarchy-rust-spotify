@@ -150,8 +150,11 @@ pub enum ClientMsg {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "req", rename_all = "snake_case")]
 pub enum Request {
-    /// The user's playlists.
-    Playlists,
+    /// The user's playlists, in `order`.
+    Playlists {
+        #[serde(default)]
+        order: PlaylistOrder,
+    },
     /// A page of tracks from "liked", or a spotify:playlist:/spotify:album: URI.
     Tracks { of: String, offset: u32 },
     /// Tracks, artists, albums and playlists matching `q`.
@@ -160,6 +163,19 @@ pub enum Request {
     Artist { uri: String },
     /// Debugging: a raw GET of a Web API path, answered with `json`.
     Api { path: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PlaylistOrder {
+    /// Most recently played first (this player and other Spotify apps),
+    /// the rest in library order. Like Spotify's "Recents".
+    #[default]
+    Recent,
+    /// As arranged in the Spotify library.
+    Library,
+    /// Alphabetical.
+    Name,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

@@ -537,7 +537,13 @@ fn ls(args: &[String]) -> Result<()> {
     let arg = |i: usize| args.get(i).cloned();
     let offset = |i: usize| arg(i).and_then(|o| o.parse().ok()).unwrap_or(0);
     let req = match arg(0).as_deref() {
-        Some("playlists") | None => Request::Playlists,
+        Some("playlists") | None => Request::Playlists {
+            order: match arg(1).as_deref() {
+                Some("library") => omarchy_rust_spotify_proto::PlaylistOrder::Library,
+                Some("name") => omarchy_rust_spotify_proto::PlaylistOrder::Name,
+                _ => omarchy_rust_spotify_proto::PlaylistOrder::Recent,
+            },
+        },
         Some("liked") => Request::Tracks {
             of: "liked".into(),
             offset: offset(1),

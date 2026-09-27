@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use omarchy_rust_spotify_proto::{Item, ItemKind, Request, Section};
+use omarchy_rust_spotify_proto::{Item, ItemKind, PlaylistOrder, Request, Section};
 
 use super::*;
 
@@ -60,6 +60,7 @@ pub(super) struct Browser {
     pending: HashMap<u64, Target>,
     next_id: u64,
     started: bool,
+    order: PlaylistOrder,
     /// Last frame's clickable rows: (rect, row index) for sidebar and list.
     sidebar_rows: Vec<(Rect, usize)>,
     list_rows: Vec<(Rect, usize)>,
@@ -82,6 +83,7 @@ impl Default for Browser {
             pending: HashMap::new(),
             next_id: 1000,
             started: false,
+            order: PlaylistOrder::default(),
             sidebar_rows: Vec::new(),
             list_rows: Vec::new(),
             list_rect: Rect::default(),
@@ -118,14 +120,20 @@ impl Browser {
         self.next_id
     }
 
+    /// Ask for the playlists again (order changes as things are played).
+    pub(super) fn refresh_playlists(&mut self, order: PlaylistOrder, out: &mut Vec<Out>) {
+        self.order = order;
+        let id = self.id(Target::Sidebar);
+        out.push(Out::Req(id, Request::Playlists { order }));
+    }
+
     /// First requests once connected: playlists, and Liked Songs open.
-    pub(super) fn start(&mut self, out: &mut Vec<Out>) {
+    pub(super) fn start(&mut self, order: PlaylistOrder, out: &mut Vec<Out>) {
         if self.started {
             return;
         }
         self.started = true;
-        let id = self.id(Target::Sidebar);
-        out.push(Out::Req(id, Request::Playlists));
+        self.refresh_playlists(order, out);
         self.open(
             "Liked Songs".into(),
             Request::Tracks {
@@ -304,6 +312,15 @@ impl Browser {
                 // Tracks in an artist's "Popular" play in the artist
                 // context; album lists under an artist don't have tracks.
                 let context = v.context.clone();
+                // "Recents": what you just played goes to the top now,
+                // without waiting for the daemon's next answer.
+                if let Some(ctx) = &context
+                    && self.order == PlaylistOrder::Recent
+                    && let Some(i) = self.playlists.iter().position(|p| &p.uri == ctx)
+                {
+                    let p = self.playlists.remove(i);
+                    self.playlists.insert(0, p);
+                }
                 let cmd = match context {
                     Some(ctx) => Command::PlayIn {
                         context: ctx,
@@ -1112,9 +1129,14 @@ mod tests {
     fn start_loads_playlists_and_opens_liked() {
         let mut b = Browser::default();
         let mut out = Vec::new();
-        b.start(&mut out);
+        b.start(PlaylistOrder::Recent, &mut out);
         let r = reqs(&out);
-        assert!(matches!(r[0].1, Request::Playlists));
+        assert!(matches!(
+            r[0].1,
+            Request::Playlists {
+                order: PlaylistOrder::Recent
+            }
+        ));
         assert_eq!(
             r[1].1,
             Request::Tracks {
@@ -1124,7 +1146,7 @@ mod tests {
         );
         // Starting twice does nothing.
         let mut again = Vec::new();
-        b.start(&mut again);
+        b.start(PlaylistOrder::Recent, &mut again);
         assert!(again.is_empty());
     }
 
@@ -1132,7 +1154,7 @@ mod tests {
     fn enter_plays_a_liked_track_in_liked() {
         let mut b = Browser::default();
         let mut out = Vec::new();
-        b.start(&mut out);
+        b.start(PlaylistOrder::Recent, &mut out);
         let view_id = reqs(&out)[1].0;
         answer(
             &mut b,
@@ -1221,10 +1243,49 @@ mod tests {
     }
 
     #[test]
+    fn playing_from_a_playlist_moves_it_to_the_top() {
+        let mut b = Browser::default();
+        let mut out = Vec::new();
+        b.start(PlaylistOrder::Recent, &mut out);
+        let pl = |n: &str| Item {
+            kind: ItemKind::Playlist,
+            uri: format!("spotify:playlist:{n}"),
+            name: n.into(),
+            subtitle: String::new(),
+            duration_ms: None,
+            image: None,
+        };
+        b.playlists = vec![pl("a"), pl("b"), pl("c")];
+        // Open "c" from the sidebar and play its first track.
+        b.sidebar_sel = SIDEBAR_FIXED + 2;
+        let out = key(&mut b, KeyCode::Enter);
+        let id = reqs(&out)[0].0;
+        answer(
+            &mut b,
+            id,
+            vec![Section {
+                title: "c".into(),
+                items: vec![track("x")],
+                total: 1,
+                offset: 0,
+            }],
+        );
+        let out = key(&mut b, KeyCode::Enter);
+        assert_eq!(
+            cmds(&out),
+            vec![Command::PlayIn {
+                context: "spotify:playlist:c".into(),
+                track: Some("x".into())
+            }]
+        );
+        assert_eq!(b.playlists[0].name, "c");
+    }
+
+    #[test]
     fn stale_responses_are_dropped() {
         let mut b = Browser::default();
         let mut out = Vec::new();
-        b.start(&mut out);
+        b.start(PlaylistOrder::Recent, &mut out);
         let liked_id = reqs(&out)[1].0;
         // The user opens a search before Liked Songs arrives.
         key(&mut b, KeyCode::Char('/'));
@@ -1252,7 +1313,7 @@ mod tests {
     fn scrolling_near_the_end_loads_the_next_page() {
         let mut b = Browser::default();
         let mut out = Vec::new();
-        b.start(&mut out);
+        b.start(PlaylistOrder::Recent, &mut out);
         let id = reqs(&out)[1].0;
         let items = (0..50).map(|i| track(&format!("t{i}"))).collect();
         answer(

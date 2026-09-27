@@ -9,6 +9,7 @@
 # muted = "#51545e"       # album, times, help, empty progress
 
 [layout]
+# playlist-order = "recent" # recent (like Spotify's Recents) | library | name
 # skin = "library"        # press t to cycle:
 #   library   find and play music (default), in your Omarchy theme
 #   winamp    Winamp 2.x base skin: green LCD, playlist editor

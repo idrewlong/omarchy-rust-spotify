@@ -261,7 +261,15 @@ async fn execute(ctx: &Ctx, cmd: Command) -> Result<()> {
         Command::Volume { .. } => unreachable!("handled before needing Spotify"),
         Command::PlayIn { context, track } => {
             let username = ctx.session.borrow().username();
-            play_in(spirc, &username, active, context, track)?
+            let played = if context.starts_with("spotify:track:") {
+                None
+            } else {
+                Some(context.clone())
+            };
+            play_in(spirc, &username, active, context, track)?;
+            if let Some(c) = played {
+                ctx.library.note_played(&c);
+            }
         }
         Command::Login | Command::Logout | Command::LoginApp { .. } => {
             unreachable!("handled elsewhere")
@@ -367,6 +375,7 @@ async fn run() -> Result<()> {
     let library = Arc::new(library::Library::new(
         webapi::WebApi::new(config_rx.clone(), secrets::secrets_dir()),
         session_rx.clone(),
+        &dir,
     ));
     let ipc_library = library.clone();
     let listener = ipc::bind(&omarchy_rust_spotify_proto::socket_path())?;

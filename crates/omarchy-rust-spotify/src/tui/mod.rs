@@ -16,7 +16,8 @@ use std::time::{Duration, SystemTime};
 
 use anyhow::Result;
 use omarchy_rust_spotify_proto::{
-    ClientMsg, Command, DaemonError, PlayerState, Repeat, ServerMsg, Status, socket_path,
+    ClientMsg, Command, DaemonError, PlayerState, PlaylistOrder, Repeat, ServerMsg, Status,
+    socket_path,
 };
 use ratatui::crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
@@ -136,6 +137,8 @@ enum CoverPlacement {
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 struct LayoutSettings {
     skin: Skin,
+    /// Sidebar playlists: recent (like Spotify's Recents), library, name.
+    playlist_order: PlaylistOrder,
     cover: CoverPlacement,
     /// Cover height in rows; 0 = as big as fits.
     cover_size: u16,
@@ -153,6 +156,7 @@ impl Default for LayoutSettings {
     fn default() -> Self {
         Self {
             skin: Skin::Library,
+            playlist_order: PlaylistOrder::Recent,
             cover: CoverPlacement::Left,
             cover_size: 0,
             align: Align::Center,
@@ -659,6 +663,7 @@ fn event_loop(
     };
     let mut watched = (mtime(&theme_path()), mtime(&tui_path()));
     let mut last_check = std::time::Instant::now();
+    let mut last_playlists = std::time::Instant::now();
     // A new binary seen, and since when unchanged: switch only once it has
     // been stable for a second (i.e. fully written).
     let mut update_seen: Option<(Option<(SystemTime, u64)>, std::time::Instant)> = None;
@@ -744,7 +749,14 @@ fn event_loop(
         // since the daemon may have restarted).
         if app.connected && app.settings.layout.skin.uses_browser() {
             let mut out = Vec::new();
-            app.browser.start(&mut out);
+            app.browser
+                .start(app.settings.layout.playlist_order, &mut out);
+            // Keep "Recents" current (plays on other devices, too).
+            if last_playlists.elapsed() >= Duration::from_secs(300) {
+                last_playlists = std::time::Instant::now();
+                app.browser
+                    .refresh_playlists(app.settings.layout.playlist_order, &mut out);
+            }
             send_out(&mut writer, out);
         }
 
