@@ -17,9 +17,17 @@
 #   ipod      2004 iPod with a clickable click wheel and menus
 #   zune      Zune software 2006: black, lowercase, magenta/orange
 #   wmp11     Windows Media Player 11 (Vista): glossy black Aero
-#   visualizer  full-screen spectrum from the real audio (v: bars/mirror)
+#   visualizer  full-screen visualizations of the real audio (v: next style)
 #   classic   big now-playing, in your Omarchy theme
 #   wmp2000   Windows 2000 era Media Player
+# viz = "bars"            # the visualizer's style, after WMP's visualizations:
+#   bars            spectrum bars with falling peak caps
+#   mirror          spectrum mirrored about the middle
+#   scope           the waveform as a glowing line (Bars and Waves)
+#   fire-storm      the spectrum burning upward (Bars and Waves: Fire Storm)
+#   musical-colors  rings of colour, bass in the middle
+#   alchemy         a morphing plasma that changes scene every few bars
+#   battery         a zooming, spinning, mirrored feedback tunnel
 # [colors] apply to library and classic; the period skins keep their own.
 # cover = "left"          # left | top | none  (left falls back to top when narrow)
 # cover-size = 0          # rows; 0 = as big as fits

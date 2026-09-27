@@ -620,8 +620,16 @@ fn main() -> Result<()> {
                 topics: vec!["player".into(), "viz".into()],
             })?;
             let mut n = 0;
-            while n < 5 {
-                if let ServerMsg::Viz { bands } = c.recv()? {
+            while n < 30 {
+                if let ServerMsg::Viz {
+                    bands,
+                    wave,
+                    bass,
+                    mid,
+                    treble,
+                    beat,
+                } = c.recv()?
+                {
                     n += 1;
                     let line: String = bands
                         .iter()
@@ -629,7 +637,12 @@ fn main() -> Result<()> {
                             [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'][b as usize * 8 / 255]
                         })
                         .collect();
-                    println!("{line}  peak {}", bands.iter().max().unwrap_or(&0));
+                    println!(
+                        "{line}  peak {:3}  bass {bass:3} mid {mid:3} treble {treble:3}  wave {:3}{}",
+                        bands.iter().max().unwrap_or(&0),
+                        wave.len(),
+                        if beat { "  BEAT" } else { "" }
+                    );
                 }
             }
             Ok(())

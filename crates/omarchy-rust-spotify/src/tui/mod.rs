@@ -162,6 +162,9 @@ struct LayoutSettings {
     show_help: bool,
     /// Title shown in the frame.
     title: String,
+    /// The visualizer skin's style: bars, mirror, scope, fire-storm,
+    /// musical-colors, alchemy, battery.
+    viz: visualizer::Style_,
 }
 
 impl Default for LayoutSettings {
@@ -178,6 +181,7 @@ impl Default for LayoutSettings {
             show_status: true,
             show_help: true,
             title: " omarchy-rust-spotify ".into(),
+            viz: Default::default(),
         }
     }
 }
@@ -564,8 +568,8 @@ pub fn debug_term() -> Result<()> {
 
 /// `tui --skin <name>`: this window's skin, whatever tui.toml says.
 static SKIN_OVERRIDE: std::sync::OnceLock<Skin> = std::sync::OnceLock::new();
-/// `tui --viz mirror`: start the visualizer in its mirror style.
-static VIZ_MIRROR: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+/// `tui --viz <style>`: start the visualizer in this style.
+static VIZ_OVERRIDE: std::sync::OnceLock<visualizer::Style_> = std::sync::OnceLock::new();
 
 pub fn run(args: &[String]) -> Result<()> {
     let mut it = args.iter();
@@ -580,7 +584,12 @@ pub fn run(args: &[String]) -> Result<()> {
                 let _ = SKIN_OVERRIDE.set(skin);
             }
             "--viz" => {
-                let _ = VIZ_MIRROR.set(it.next().map(String::as_str) == Some("mirror"));
+                let name = it
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--viz needs a style"))?;
+                let style = visualizer::Style_::parse(name)
+                    .ok_or_else(|| anyhow::anyhow!("unknown visualizer style: {name}"))?;
+                let _ = VIZ_OVERRIDE.set(style);
             }
             other => anyhow::bail!("tui: unknown option {other}"),
         }
@@ -654,10 +663,7 @@ fn key_command(app: &mut App, code: KeyCode, mods: KeyModifiers) -> Option<Optio
             pct: s.volume.saturating_sub(5),
         }),
         KeyCode::Char('v') if app.settings.layout.skin == Skin::Visualizer => {
-            app.viz.style = match app.viz.style {
-                visualizer::Style_::Bars => visualizer::Style_::Mirror,
-                visualizer::Style_::Mirror => visualizer::Style_::Bars,
-            };
+            app.viz.style = app.viz.style.next();
             None
         }
         KeyCode::Char('t') => {
@@ -729,9 +735,10 @@ fn event_loop(
         ipod: Default::default(),
         viz: Default::default(),
     };
-    if VIZ_MIRROR.get() == Some(&true) {
-        app.viz.style = visualizer::Style_::Mirror;
-    }
+    app.viz.style = VIZ_OVERRIDE
+        .get()
+        .copied()
+        .unwrap_or(app.settings.layout.viz);
     let mut watched = (mtime(&theme_path()), mtime(&tui_path()));
     let mut last_check = std::time::Instant::now();
     let mut last_playlists = std::time::Instant::now();
@@ -825,7 +832,14 @@ fn event_loop(
                 }
                 Msg::Input(Event::Resize(..)) => app.needs_clear = true,
                 Msg::Input(_) => {}
-                Msg::Server(ServerMsg::Viz { ref bands }) => app.viz.frame(bands),
+                Msg::Server(ServerMsg::Viz {
+                    ref bands,
+                    ref wave,
+                    bass,
+                    mid,
+                    treble,
+                    beat,
+                }) => app.viz.frame(bands, wave, [bass, mid, treble], beat),
                 Msg::Server(ref m @ (ServerMsg::Res { .. } | ServerMsg::Err { .. })) => {
                     app.browser.on_response(m);
                 }
@@ -886,7 +900,11 @@ fn event_loop(
         let now = (mtime(&theme_path()), mtime(&tui_path()));
         if now != watched {
             watched = now;
+            let old_viz = app.settings.layout.viz;
             app.settings = load_settings();
+            if app.settings.layout.viz != old_viz {
+                app.viz.style = app.settings.layout.viz;
+            }
             app.needs_clear = true;
         }
         if !app.connected {
@@ -997,12 +1015,18 @@ pub(super) mod tests {
                         app.browser = library::Browser::sample();
                         // The iPod's menus as well as Now Playing.
                         app.ipod.menu = w % 2 == 0;
-                        // A real-looking spectrum, both visualizer styles.
+                        // A real-looking frame, every visualizer style (a
+                        // few steps, so the feedback styles run on a canvas
+                        // that already holds something).
                         let bands: Vec<u8> = (0..48).map(|i| (255 - i * 5) as u8).collect();
-                        app.viz.frame(&bands);
-                        app.viz.step();
-                        if w % 2 == 0 {
-                            app.viz.style = visualizer::Style_::Mirror;
+                        let wave: Vec<i8> = (0..256)
+                            .map(|i| ((i as f32 * 0.2).sin() * 100.0) as i8)
+                            .collect();
+                        let n = visualizer::Style_::ALL.len();
+                        app.viz.style = visualizer::Style_::ALL[(w as usize + h as usize) % n];
+                        for k in 0..3 {
+                            app.viz.frame(&bands, &wave, [200, 150, 100], k == 1);
+                            app.viz.step();
                         }
                     }
                     let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();

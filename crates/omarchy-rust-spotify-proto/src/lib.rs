@@ -287,10 +287,25 @@ pub enum ServerMsg {
         id: u64,
         value: serde_json::Value,
     },
-    /// Spectrum for the "viz" topic, ~30 per second: log-spaced bands from
-    /// 40 Hz to 16 kHz, each 0..=255 over a -72..0 dB range.
+    /// A visualizer frame for the "viz" topic, ~30 per second.
     Viz {
+        /// Spectrum: log-spaced bands from 50 Hz to 16 kHz, each 0..=255
+        /// over a -72..0 dB range (tilted +3 dB/octave).
         bands: Vec<u8>,
+        /// Waveform: 256 mono samples (~12 ms), -127..=127, starting at a
+        /// rising zero crossing so a scope drawn from it holds still.
+        #[serde(default)]
+        wave: Vec<i8>,
+        /// Loudness of the lows (<250 Hz), mids and highs (>4 kHz), 0..=255.
+        #[serde(default)]
+        bass: u8,
+        #[serde(default)]
+        mid: u8,
+        #[serde(default)]
+        treble: u8,
+        /// A kick: the bass jumped well above its recent average.
+        #[serde(default)]
+        beat: bool,
     },
 }
 

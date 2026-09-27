@@ -360,7 +360,7 @@ async fn run() -> Result<()> {
     };
     let interrupt = sink::Interrupt::default();
     let tap = Arc::new(viz::Tap::default());
-    let (viz_tx, _) = broadcast::channel::<Arc<Vec<u8>>>(8);
+    let (viz_tx, _) = broadcast::channel::<Arc<omarchy_rust_spotify_proto::ServerMsg>>(8);
     tokio::spawn(viz::run(tap.clone(), viz_tx.clone()));
     let player = Player::new(player_config, session.clone(), mixer.get_soft_volume(), {
         let (interrupt, tap) = (interrupt.clone(), tap.clone());

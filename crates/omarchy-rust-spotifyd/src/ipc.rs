@@ -18,7 +18,7 @@ use crate::viz::Tap;
 #[derive(Clone)]
 pub struct VizFeed {
     pub tap: Arc<Tap>,
-    pub frames: broadcast::Sender<Arc<Vec<u8>>>,
+    pub frames: broadcast::Sender<Arc<ServerMsg>>,
 }
 use crate::state::Update;
 
@@ -231,19 +231,14 @@ async fn forward(
 /// Spectrum frames to one client. Holding `_watch` keeps the tap on; the
 /// task is aborted (dropping it) when the client unsubscribes or leaves.
 async fn forward_viz(
-    mut rx: broadcast::Receiver<Arc<Vec<u8>>>,
+    mut rx: broadcast::Receiver<Arc<ServerMsg>>,
     _watch: crate::viz::Watch,
     out: mpsc::UnboundedSender<ServerMsg>,
 ) {
     loop {
         match rx.recv().await {
-            Ok(bands) => {
-                if out
-                    .send(ServerMsg::Viz {
-                        bands: (*bands).clone(),
-                    })
-                    .is_err()
-                {
+            Ok(frame) => {
+                if out.send((*frame).clone()).is_err() {
                     return;
                 }
             }
