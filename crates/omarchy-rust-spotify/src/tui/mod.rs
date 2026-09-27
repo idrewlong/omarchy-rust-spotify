@@ -18,7 +18,10 @@ use anyhow::Result;
 use omarchy_rust_spotify_proto::{
     ClientMsg, Command, DaemonError, PlayerState, Repeat, ServerMsg, Status, socket_path,
 };
-use ratatui::crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use ratatui::crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+    MouseButton, MouseEventKind,
+};
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -29,7 +32,32 @@ use ratatui_image::{
 };
 use serde::Deserialize;
 
+mod classic;
+mod compact;
+mod wmp;
+
 // ---------------------------------------------------------------- settings
+
+/// Built-in presets. Each draws the whole screen its own way from the same
+/// state; `t` cycles them live.
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+enum Skin {
+    #[default]
+    Classic,
+    Compact,
+    Wmp2000,
+}
+
+impl Skin {
+    fn next(self) -> Self {
+        match self {
+            Skin::Classic => Skin::Compact,
+            Skin::Compact => Skin::Wmp2000,
+            Skin::Wmp2000 => Skin::Classic,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Default, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
@@ -84,6 +112,7 @@ enum CoverPlacement {
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 struct LayoutSettings {
+    skin: Skin,
     cover: CoverPlacement,
     /// Cover height in rows; 0 = as big as fits.
     cover_size: u16,
@@ -100,6 +129,7 @@ struct LayoutSettings {
 impl Default for LayoutSettings {
     fn default() -> Self {
         Self {
+            skin: Skin::Classic,
             cover: CoverPlacement::Left,
             cover_size: 0,
             align: Align::Center,
@@ -286,6 +316,49 @@ struct App {
     /// The current cover, ready to render, and which file it came from.
     cover: Option<StatefulProtocol>,
     cover_path: Option<String>,
+    /// Clickable areas from the last frame, filled in by the skin.
+    hits: Vec<(Rect, Hit)>,
+}
+
+#[derive(Debug, Clone)]
+enum Hit {
+    Cmd(Command),
+    /// A seek bar: a click seeks to that fraction of the track.
+    Seek,
+    /// A volume bar: a click sets that fraction.
+    Volume,
+    /// Close the player.
+    Quit,
+}
+
+enum Clicked {
+    Cmd(Command),
+    Quit,
+}
+
+impl App {
+    /// What a left click at (col, row) means, if anything.
+    fn clicked(&self, col: u16, row: u16) -> Option<Clicked> {
+        let (rect, hit) = self
+            .hits
+            .iter()
+            .rev()
+            .find(|(r, _)| col >= r.x && col < r.right() && row >= r.y && row < r.bottom())?;
+        let frac = (col - rect.x) as f64 / rect.width.saturating_sub(1).max(1) as f64;
+        Some(match hit {
+            Hit::Cmd(cmd) => Clicked::Cmd(cmd.clone()),
+            Hit::Seek => {
+                let t = self.state.track.as_ref()?;
+                Clicked::Cmd(Command::Seek {
+                    ms: (t.duration_ms as f64 * frac.min(1.0)) as u32,
+                })
+            }
+            Hit::Volume => Clicked::Cmd(Command::Volume {
+                pct: (frac.min(1.0) * 100.0).round() as u8,
+            }),
+            Hit::Quit => Clicked::Quit,
+        })
+    }
 }
 
 /// Decode the track's cached cover when it changes. Covers are local files
@@ -310,249 +383,41 @@ fn refresh_cover(app: &mut App) {
     app.cover_path = path;
 }
 
-/// Where the cover goes, and the rect left for everything else.
-fn place_cover(app: &App, body: Rect, text_rows: u16) -> (Option<Rect>, Rect) {
-    let lay = &app.settings.layout;
-    if app.cover.is_none() || lay.cover == CoverPlacement::None || body.height < 6 {
-        return (None, body);
+/// The problem to show above everything else, if any: it explains why
+/// nothing else works.
+fn banner(app: &App) -> Option<String> {
+    let s = &app.state;
+    if !app.connected {
+        return Some("Daemon not running: reconnecting…".into());
     }
-    // Cells are taller than wide: a square cover is wider in columns.
-    let font = app.picker.font_size();
-    let (fw, fh) = (font.width, font.height);
-    let cols_for = |rows: u16| (rows as u32 * fh.max(1) as u32 / fw.max(1) as u32) as u16;
-    let want = |fits: u16| {
-        let fits = fits.min(24);
-        if lay.cover_size > 0 {
-            lay.cover_size.min(fits)
-        } else {
-            fits
+    match s.error {
+        Some(DaemonError::SignedOut) => Some("Not signed in: press L".into()),
+        Some(DaemonError::PremiumRequired) => {
+            Some("Spotify Premium is required for playback".into())
         }
-    };
-
-    // Beside the text, if there's room for the text too.
-    if lay.cover == CoverPlacement::Left {
-        let rows = want(body.height.saturating_sub(2));
-        let cols = cols_for(rows);
-        if rows >= 4 && body.width >= cols + 36 {
-            let top = body.y + (body.height - rows) / 2;
-            let cover = Rect {
-                x: body.x + 2,
-                y: top,
-                width: cols,
-                height: rows,
-            };
-            let rest_x = cover.x + cols + 3;
-            let rest = Rect {
-                x: rest_x,
-                y: body.y,
-                width: body.right().saturating_sub(rest_x + 1),
-                height: body.height,
-            };
-            return (Some(cover), rest);
-        }
+        Some(DaemonError::Offline) => Some("Can't reach Spotify: retrying…".into()),
+        None if s.login_url.is_some() => Some("Approve the sign-in in your browser".into()),
+        None => None,
     }
-    // Above the text: leave room for text, progress, time and status.
-    let rows = want(body.height.saturating_sub(text_rows + 6));
-    let cols = cols_for(rows).min(body.width);
-    if rows < 4 {
-        return (None, body);
-    }
-    let cover = Rect {
-        x: body.x + (body.width - cols) / 2,
-        y: body.y + 1,
-        width: cols,
-        height: rows,
-    };
-    let rest = Rect {
-        x: body.x,
-        y: cover.bottom(),
-        width: body.width,
-        height: body.bottom() - cover.bottom(),
-    };
-    (Some(cover), rest)
 }
 
-fn draw(f: &mut Frame, app: &mut App) {
-    let p = app.settings.palette;
-    let lay = &app.settings.layout;
-    let base = Style::new().fg(p.fg).bg(p.bg);
-    let area = f.area();
-    f.render_widget(Block::new().style(base), area);
-
-    let (borders, border_type) = match lay.frame {
-        Frame_::None => (Borders::NONE, BorderType::Plain),
-        Frame_::Rounded => (Borders::ALL, BorderType::Rounded),
-        Frame_::Plain => (Borders::ALL, BorderType::Plain),
-        Frame_::Double => (Borders::ALL, BorderType::Double),
-        Frame_::Thick => (Borders::ALL, BorderType::Thick),
-    };
-    let block = Block::new()
-        .borders(borders)
-        .border_type(border_type)
-        .border_style(Style::new().fg(p.muted))
-        .title(Span::styled(
-            lay.title.clone(),
-            Style::new().fg(p.accent).add_modifier(Modifier::BOLD),
-        ))
-        .style(base);
-    let inner = block.inner(area);
-    f.render_widget(block, area);
-
-    let align = match lay.align {
-        Align::Center => Alignment::Center,
-        Align::Left => Alignment::Left,
-    };
-    let s = &app.state;
-    let mut lines: Vec<Line> = Vec::new();
-
-    // Problems first: they explain why nothing else works.
-    let banner = if !app.connected {
-        Some("Daemon not running: reconnecting…".to_string())
-    } else {
-        match s.error {
-            Some(DaemonError::SignedOut) => Some("Not signed in: press L".into()),
-            Some(DaemonError::PremiumRequired) => {
-                Some("Spotify Premium is required for playback".into())
-            }
-            Some(DaemonError::Offline) => Some("Can't reach Spotify: retrying…".into()),
-            None if s.login_url.is_some() => Some("Approve the sign-in in your browser".into()),
-            None => None,
-        }
-    };
-    if let Some(b) = banner {
-        lines.push(Line::styled(
-            b,
-            Style::new().fg(p.accent).add_modifier(Modifier::BOLD),
-        ));
-        lines.push(Line::raw(""));
-    }
-
-    match &s.track {
-        Some(t) => {
-            lines.push(Line::styled(
-                t.name.clone(),
-                Style::new().fg(p.fg).add_modifier(Modifier::BOLD),
-            ));
-            lines.push(Line::styled(
-                t.artists.join(", "),
-                Style::new().fg(p.accent),
-            ));
-            if lay.show_album && !t.album.is_empty() {
-                lines.push(Line::styled(t.album.clone(), Style::new().fg(p.muted)));
-            }
-        }
-        None => {
-            lines.push(Line::styled(
-                "Nothing playing",
-                Style::new().fg(p.fg).add_modifier(Modifier::BOLD),
-            ));
-            lines.push(Line::styled(
-                format!(
-                    "Pick \"{}\" in any Spotify app, or press space",
-                    s.device_name
-                ),
-                Style::new().fg(p.muted),
-            ));
-        }
-    }
-
-    // Help on the bottom row; the cover, then text, progress and status in
-    // the rest.
-    let text_h = lines.len() as u16;
-    let [body, help_row] = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(if lay.show_help { 1 } else { 0 }),
-    ])
-    .areas(inner);
-    let (cover_rect, content) = if s.track.is_some() {
-        place_cover(app, body, text_h)
-    } else {
-        (None, body)
-    };
-    let rows = Layout::vertical([
-        Constraint::Fill(1),
-        Constraint::Length(text_h),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(1),
-        Constraint::Length(if lay.show_status { 1 } else { 0 }),
-        Constraint::Fill(1),
-    ])
-    .split(content);
-
-    f.render_widget(Paragraph::new(lines).alignment(align), rows[1]);
-
-    if let Some(t) = &s.track {
-        let pos = s.position_now_ms();
-        let ratio = if t.duration_ms > 0 {
-            pos as f64 / t.duration_ms as f64
-        } else {
-            0.0
-        };
-        let bar_w = content.width.saturating_sub(4).min(60);
-        let x = match lay.align {
-            Align::Center => content.x + (content.width - bar_w) / 2,
-            Align::Left => content.x,
-        };
-        f.render_widget(
-            Paragraph::new(progress_line(bar_w, ratio, lay.progress, &p)),
-            Rect {
-                x,
-                y: rows[3].y,
-                width: bar_w,
-                height: 1,
-            },
-        );
-        let times = format!("{}  /  {}", fmt_ms(pos), fmt_ms(t.duration_ms));
-        f.render_widget(
-            Paragraph::new(Line::styled(times, Style::new().fg(p.muted))).alignment(align),
-            rows[4],
-        );
-    }
-
-    if lay.show_status {
-        let play = match s.status {
-            Status::Playing => "▶ playing",
-            Status::Paused => "⏸ paused",
-            Status::Loading => "… loading",
-            Status::Stopped => "■ stopped",
-        };
-        let repeat = match s.repeat {
-            Repeat::Off => "repeat off",
-            Repeat::Context => "repeat all",
-            Repeat::Track => "repeat one",
-        };
-        let on = |b: bool| if b { p.accent } else { p.muted };
-        let status = Line::from(vec![
-            Span::styled(play, Style::new().fg(p.fg)),
-            Span::styled("   shuffle", Style::new().fg(on(s.shuffle))),
-            Span::styled(
-                format!("   {repeat}"),
-                Style::new().fg(on(s.repeat != Repeat::Off)),
-            ),
-            Span::styled(format!("   vol {}%", s.volume), Style::new().fg(p.muted)),
-            Span::styled(format!("   {}", s.device_name), Style::new().fg(p.muted)),
-        ]);
-        f.render_widget(Paragraph::new(status).alignment(align), rows[5]);
-    }
-
-    if lay.show_help {
-        let help = match &app.settings.problem {
-            Some(problem) => Line::styled(problem.clone(), Style::new().fg(p.accent)),
-            None => Line::styled(
-                "space play/pause · n/p next/prev · ←/→ seek · s shuffle · r repeat · +/- volume · L sign in · q quit",
-                Style::new().fg(p.muted),
-            ),
-        };
-        f.render_widget(Paragraph::new(help).alignment(Alignment::Center), help_row);
-    }
-
-    if let (Some(rect), Some(cover)) = (cover_rect, app.cover.as_mut()) {
+/// Render the cover (if any) into `rect`.
+fn render_cover(f: &mut Frame, app: &mut App, rect: Rect) {
+    if let Some(cover) = app.cover.as_mut() {
         f.render_stateful_widget(
             StatefulImage::default().resize(Resize::Fit(Some(FilterType::Triangle))),
             rect,
             cover,
         );
+    }
+}
+
+fn draw(f: &mut Frame, app: &mut App) {
+    app.hits.clear();
+    match app.settings.layout.skin {
+        Skin::Classic => classic::draw(f, app),
+        Skin::Compact => compact::draw(f, app),
+        Skin::Wmp2000 => wmp::draw(f, app),
     }
 }
 
@@ -565,10 +430,12 @@ pub fn run() -> Result<()> {
     let exe_stamp = mtime(&exe);
 
     let mut terminal = ratatui::init();
+    let _ = ratatui::crossterm::execute!(std::io::stdout(), EnableMouseCapture);
     // Ask the terminal which image protocol it speaks. This reads its reply
     // from stdin, so it must happen before the keyboard thread starts.
     let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
     let result = event_loop(&mut terminal, &exe, exe_stamp, picker);
+    let _ = ratatui::crossterm::execute!(std::io::stdout(), DisableMouseCapture);
     ratatui::restore();
 
     if let Ok(true) = result {
@@ -585,7 +452,9 @@ pub fn run() -> Result<()> {
 fn key_command(app: &mut App, code: KeyCode, mods: KeyModifiers) -> Option<Option<Command>> {
     let s = &app.state;
     Some(match code {
-        KeyCode::Char('q') | KeyCode::Esc => return None,
+        // Not Esc: a terminal's late reply to the image-protocol query
+        // starts with ESC and would read as a keypress, closing the player.
+        KeyCode::Char('q') => return None,
         KeyCode::Char('c') if mods.contains(KeyModifiers::CONTROL) => return None,
         KeyCode::Char(' ') => Some(Command::PlayPause),
         KeyCode::Char('n') => Some(Command::Next),
@@ -610,6 +479,10 @@ fn key_command(app: &mut App, code: KeyCode, mods: KeyModifiers) -> Option<Optio
         KeyCode::Char('-') => Some(Command::Volume {
             pct: s.volume.saturating_sub(5),
         }),
+        KeyCode::Char('t') => {
+            app.settings.layout.skin = app.settings.layout.skin.next();
+            None
+        }
         KeyCode::Char('L') => {
             app.login_requested = true;
             Some(Command::Login)
@@ -648,9 +521,13 @@ fn event_loop(
         picker,
         cover: None,
         cover_path: None,
+        hits: Vec::new(),
     };
     let mut watched = (mtime(&theme_path()), mtime(&tui_path()));
     let mut last_check = std::time::Instant::now();
+    // Input in the first moments is the terminal answering our queries, not
+    // the user.
+    let started = std::time::Instant::now();
 
     loop {
         refresh_cover(&mut app);
@@ -667,11 +544,21 @@ fn event_loop(
         msgs.extend(rx.try_iter());
         for msg in msgs {
             match msg {
+                Msg::Input(_) if started.elapsed() < Duration::from_millis(500) => {}
                 Msg::Input(Event::Key(k)) if k.kind == KeyEventKind::Press => {
                     match key_command(&mut app, k.code, k.modifiers) {
                         None => return Ok(false),
                         Some(Some(cmd)) => send(&mut writer, cmd),
                         Some(None) => {}
+                    }
+                }
+                Msg::Input(Event::Mouse(m))
+                    if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) =>
+                {
+                    match app.clicked(m.column, m.row) {
+                        Some(Clicked::Cmd(cmd)) => send(&mut writer, cmd),
+                        Some(Clicked::Quit) => return Ok(false),
+                        None => {}
                     }
                 }
                 Msg::Input(_) => {}
@@ -735,5 +622,71 @@ fn apply(app: &mut App, msg: Msg) {
             }
         }
         Msg::Server(_) | Msg::Input(_) => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use omarchy_rust_spotify_proto::Track;
+    use ratatui::{Terminal, backend::TestBackend};
+
+    fn app(skin: Skin, playing: bool) -> App {
+        let mut settings = load_settings();
+        settings.layout.skin = skin;
+        let mut state = PlayerState {
+            device_name: "Omarchy".into(),
+            volume: 50,
+            ..Default::default()
+        };
+        if playing {
+            state.status = Status::Playing;
+            state.track = Some(Track {
+                uri: "spotify:track:x".into(),
+                name: "A very long track name that will not fit anywhere at all".into(),
+                artists: vec!["Artist One".into(), "Artist Two".into()],
+                album: "Album".into(),
+                duration_ms: 200_000,
+                ..Default::default()
+            });
+            state.position_ms = 61_000;
+        }
+        App {
+            state,
+            connected: true,
+            settings,
+            login_requested: false,
+            login_page: None,
+            picker: Picker::halfblocks(),
+            cover: None,
+            cover_path: None,
+            hits: Vec::new(),
+        }
+    }
+
+    /// Every skin renders at every size without panicking, from a 1x1
+    /// terminal up, with and without a track.
+    #[test]
+    fn skins_render_at_any_size() {
+        for skin in [Skin::Classic, Skin::Compact, Skin::Wmp2000] {
+            for playing in [false, true] {
+                for (w, h) in [
+                    (1, 1),
+                    (10, 5),
+                    (40, 12),
+                    (59, 19),
+                    (60, 20),
+                    (61, 21),
+                    (80, 24),
+                    (97, 35),
+                    (200, 60),
+                ] {
+                    let mut app = app(skin, playing);
+                    let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
+                    term.draw(|f| draw(f, &mut app))
+                        .unwrap_or_else(|e| panic!("{skin:?} {w}x{h}: {e}"));
+                }
+            }
+        }
     }
 }
