@@ -34,6 +34,7 @@ use ratatui_image::{
 use serde::Deserialize;
 
 mod classic;
+mod gpu;
 mod ipod;
 mod itunes;
 mod library;
@@ -80,18 +81,22 @@ impl Skin {
         )
     }
 
-    fn next(self) -> Self {
-        match self {
-            Skin::Library => Skin::Winamp,
-            Skin::Winamp => Skin::Itunes,
-            Skin::Itunes => Skin::Ipod,
-            Skin::Ipod => Skin::Zune,
-            Skin::Zune => Skin::Wmp11,
-            Skin::Wmp11 => Skin::Visualizer,
-            Skin::Visualizer => Skin::Classic,
-            Skin::Classic => Skin::Wmp2000,
-            Skin::Wmp2000 => Skin::Library,
-        }
+    const ORDER: [Skin; 9] = [
+        Skin::Library,
+        Skin::Winamp,
+        Skin::Itunes,
+        Skin::Ipod,
+        Skin::Zune,
+        Skin::Wmp11,
+        Skin::Visualizer,
+        Skin::Classic,
+        Skin::Wmp2000,
+    ];
+
+    fn step(self, by: isize) -> Self {
+        let n = Self::ORDER.len() as isize;
+        let i = Self::ORDER.iter().position(|&s| s == self).unwrap_or(0) as isize;
+        Self::ORDER[(i + by).rem_euclid(n) as usize]
     }
 }
 
@@ -566,15 +571,85 @@ pub fn debug_term() -> Result<()> {
     Ok(())
 }
 
+fn cycle_skin(app: &mut App, by: isize) {
+    let stop = app.viz.stop() as isize;
+    let last = app.viz.stops() as isize - 1;
+    let inside = app.settings.layout.skin == Skin::Visualizer
+        && if by > 0 { stop < last } else { stop > 0 };
+    if inside {
+        app.viz.set_stop((stop + by) as usize);
+    } else {
+        app.settings.layout.skin = app.settings.layout.skin.step(by);
+        if app.settings.layout.skin == Skin::Visualizer {
+            app.viz.set_stop(if by > 0 { 0 } else { last as usize });
+        }
+    }
+    app.needs_clear = true;
+}
+
+/// A cell's size in the pixels Sixel images are drawn in, as the terminal
+/// reports it for the window. (The image library's own probe can be off
+/// under fractional scaling: 14x33 here where the cells are 12x26.)
+fn cell_pixels() -> Option<(u32, u32)> {
+    let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
+    // SAFETY: TIOCGWINSZ fills a winsize.
+    if unsafe { libc::ioctl(1, libc::TIOCGWINSZ, &mut ws) } != 0
+        || ws.ws_col == 0
+        || ws.ws_row == 0
+        || ws.ws_xpixel == 0
+    {
+        return None;
+    }
+    Some((
+        ws.ws_xpixel as u32 / ws.ws_col as u32,
+        ws.ws_ypixel as u32 / ws.ws_row as u32,
+    ))
+}
+
+/// While a GPU preset shows: keeps its renderer running at the field's
+/// pixel size and puts its newest frame over the field (which the draw left
+/// alone). Otherwise, stops the renderer.
+fn show_gpu_frame(app: &mut App, stream: &mut Option<gpu::Stream>) {
+    let showing = (app.settings.layout.skin == Skin::Visualizer)
+        .then(|| app.viz.gpu_field.zip(app.viz.gpu_name().map(String::from)))
+        .flatten();
+    let Some((field, name)) = showing else {
+        *stream = None;
+        return;
+    };
+    let (cw, ch) = cell_pixels().unwrap_or_else(|| {
+        let f = app.picker.font_size();
+        (f.width as u32, f.height as u32)
+    });
+    // Whole Sixel bands (6 px), so the image never reaches the row below.
+    let size = (
+        field.width as u32 * cw,
+        field.height as u32 * ch / 6 * 6,
+    );
+    if size.0 == 0 || size.1 == 0 {
+        return;
+    }
+    if stream.is_none() {
+        *stream = gpu::Stream::start(&name, size);
+    }
+    let Some(s) = stream.as_mut() else {
+        return;
+    };
+    s.steer(&name, size);
+    app.viz.gpu_error = s.error.lock().unwrap().clone();
+    if let Some(frame) = s.take_frame() {
+        let mut out = std::io::stdout().lock();
+        let _ = write!(out, "\x1b[{};{}H", field.y + 1, field.x + 1);
+        let _ = out.write_all(&frame);
+        let _ = out.flush();
+    }
+}
+
 /// Starts omarchy-rust-spotify-viz (installed beside this binary), detached
 /// so it outlives the player.
 fn open_gpu_viz() {
     use std::os::unix::process::CommandExt;
-    let beside = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.join("omarchy-rust-spotify-viz")))
-        .filter(|p| p.exists());
-    let _ = std::process::Command::new(beside.unwrap_or_else(|| "omarchy-rust-spotify-viz".into()))
+    let _ = std::process::Command::new(gpu::exe())
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -586,6 +661,8 @@ fn open_gpu_viz() {
 static SKIN_OVERRIDE: std::sync::OnceLock<Skin> = std::sync::OnceLock::new();
 /// `tui --viz <style>`: start the visualizer in this style.
 static VIZ_OVERRIDE: std::sync::OnceLock<visualizer::Style_> = std::sync::OnceLock::new();
+/// `tui --viz gpu:<preset>`: start on that GPU preset.
+static VIZ_GPU_OVERRIDE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
 pub fn run(args: &[String]) -> Result<()> {
     let mut it = args.iter();
@@ -603,9 +680,19 @@ pub fn run(args: &[String]) -> Result<()> {
                 let name = it
                     .next()
                     .ok_or_else(|| anyhow::anyhow!("--viz needs a style"))?;
-                let style = visualizer::Style_::parse(name)
-                    .ok_or_else(|| anyhow::anyhow!("unknown visualizer style: {name}"))?;
-                let _ = VIZ_OVERRIDE.set(style);
+                match name
+                    .strip_prefix("gpu:")
+                    .map_or_else(|| visualizer::Style_::parse(name), |_| None)
+                {
+                    Some(style) => {
+                        let _ = VIZ_OVERRIDE.set(style);
+                    }
+                    // "gpu:NAME", checked against the GPU presets once known.
+                    None => {
+                        let _ = VIZ_GPU_OVERRIDE
+                            .set(name.strip_prefix("gpu:").unwrap_or(name).to_string());
+                    }
+                }
             }
             other => anyhow::bail!("tui: unknown option {other}"),
         }
@@ -678,8 +765,11 @@ fn key_command(app: &mut App, code: KeyCode, mods: KeyModifiers) -> Option<Optio
         KeyCode::Char('-') => Some(Command::Volume {
             pct: s.volume.saturating_sub(5),
         }),
+        // v: the next visualizer, round and round without leaving the skin.
         KeyCode::Char('v') if app.settings.layout.skin == Skin::Visualizer => {
-            app.viz.style = app.viz.style.next();
+            let n = app.viz.stops();
+            app.viz.set_stop((app.viz.stop() + 1) % n);
+            app.needs_clear = true;
             None
         }
         // The full-resolution GPU visualizer, in a window of its own.
@@ -687,9 +777,14 @@ fn key_command(app: &mut App, code: KeyCode, mods: KeyModifiers) -> Option<Optio
             open_gpu_viz();
             None
         }
+        // t / T: the next / previous skin, with each visualizer style a stop
+        // of its own along the way.
         KeyCode::Char('t') => {
-            app.settings.layout.skin = app.settings.layout.skin.next();
-            app.needs_clear = true;
+            cycle_skin(app, 1);
+            None
+        }
+        KeyCode::Char('T') => {
+            cycle_skin(app, -1);
             None
         }
         KeyCode::Char('L') => {
@@ -764,6 +859,17 @@ fn event_loop(
     let mut last_check = std::time::Instant::now();
     let mut last_playlists = std::time::Instant::now();
     let mut viz_subscribed = false;
+    // The GPU presets, where the terminal can show their frames.
+    if app.picker.protocol_type() == ratatui_image::picker::ProtocolType::Sixel {
+        app.viz.gpu_names = gpu::names();
+    }
+    if let Some(name) = VIZ_GPU_OVERRIDE.get() {
+        match app.viz.gpu_names.iter().position(|n| n == name) {
+            Some(i) => app.viz.gpu = Some(i),
+            None => app.settings.problem = Some(format!("unknown visualizer: {name}")),
+        }
+    }
+    let mut gpu_stream: Option<gpu::Stream> = None;
     // A new binary seen, and since when unchanged: switch only once it has
     // been stable for a second (i.e. fully written).
     let mut update_seen: Option<(Option<(SystemTime, u64)>, std::time::Instant)> = None;
@@ -777,6 +883,7 @@ fn event_loop(
             hard_clear(terminal)?;
         }
         terminal.draw(|f| draw(f, &mut app))?;
+        show_gpu_frame(&mut app, &mut gpu_stream);
 
         // While playing, wake 4x a second to move the clock; otherwise once
         // a second for update/config checks only.
@@ -793,7 +900,7 @@ fn event_loop(
         if want_viz {
             app.viz.step();
         }
-        let wait = if want_viz && app.viz.animating() {
+        let wait = if want_viz && (app.viz.animating() || app.viz.gpu.is_some()) {
             Duration::from_millis(33)
         } else if app.state.status == Status::Playing {
             Duration::from_millis(250)
@@ -1002,6 +1109,32 @@ pub(super) mod tests {
             ipod: Default::default(),
             viz: Default::default(),
         }
+    }
+
+    /// t walks through every visualizer style as a stop of its own, and T
+    /// walks back the same way.
+    #[test]
+    fn t_steps_through_each_visualizer() {
+        use visualizer::Style_;
+        let mut app = app(Skin::Wmp11, false);
+        let mut seen = Vec::new();
+        for _ in 0..Style_::ALL.len() {
+            cycle_skin(&mut app, 1);
+            assert_eq!(app.settings.layout.skin, Skin::Visualizer);
+            seen.push(app.viz.style);
+        }
+        assert_eq!(seen, Style_::ALL.to_vec());
+        cycle_skin(&mut app, 1);
+        assert_eq!(app.settings.layout.skin, Skin::Classic);
+        cycle_skin(&mut app, -1);
+        assert_eq!(
+            (app.settings.layout.skin, app.viz.style),
+            (Skin::Visualizer, Style_::Battery)
+        );
+        for _ in 0..Style_::ALL.len() {
+            cycle_skin(&mut app, -1);
+        }
+        assert_eq!(app.settings.layout.skin, Skin::Wmp11);
     }
 
     /// Every skin renders at every size without panicking, from a 1x1

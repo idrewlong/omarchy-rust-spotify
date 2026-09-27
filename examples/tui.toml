@@ -28,6 +28,10 @@
 #   musical-colors  rings of colour, bass in the middle
 #   alchemy         a morphing plasma that changes scene every few bars
 #   battery         a zooming, spinning, mirrored feedback tunnel
+#   (t steps through each of these as its own skin, then the GPU presets:
+#   battery, alchemy, spectrum, ambience, warp and your own, in full
+#   resolution where the terminal shows Sixel images. Start on one with
+#   tui --viz gpu:NAME.)
 # [colors] apply to library and classic; the period skins keep their own.
 # cover = "left"          # left | top | none  (left falls back to top when narrow)
 # cover-size = 0          # rows; 0 = as big as fits

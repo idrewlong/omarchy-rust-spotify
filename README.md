@@ -36,9 +36,12 @@ a 2004 iPod, Zune, Windows Media Player 11, a big now-playing view,
 Windows 2000 Media Player, and a full-screen visualizer with styles after
 WMP's (bars, scope, fire storm, musical colors, alchemy, battery; `v` cycles).
 
-For the full-resolution version, open **Spotify Visualizer** from the app
-launcher (or press `V` in the visualizer skin): GPU shaders in their own
-window, driven by the same audio. Battery, Alchemy, Spectrum, Ambience and
+Press `t` through the skins and each visualizer is a stop of its own
+(`T` goes back): the terminal ones, then the GPU presets in full resolution
+("battery hd", "warp hd", ...), drawn right in the player as Sixel images in
+terminals that support them (foot, the Omarchy default, does). Or open
+**Spotify Visualizer** from the app launcher (`V` in the visualizer skin)
+for them in a window of their own, driven by the same audio. Battery, Alchemy, Spectrum, Ambience and
 Warp are built in; ←/→ switch, `f` goes fullscreen, space/n/p control
 playback. Presets are small WGSL files, so you can write your own: drop one
 in `~/.config/omarchy-rust-spotify/viz/` (start from

@@ -63,11 +63,6 @@ impl Style_ {
         }
     }
 
-    pub(super) fn next(self) -> Self {
-        let i = Self::ALL.iter().position(|&s| s == self).unwrap_or(0);
-        Self::ALL[(i + 1) % Self::ALL.len()]
-    }
-
     /// "fire storm", "fire-storm", ... as in tui.toml and `--viz`.
     pub(super) fn parse(s: &str) -> Option<Self> {
         let key = s.trim().to_lowercase().replace([' ', '_'], "-");
@@ -202,6 +197,14 @@ pub(super) struct Viz {
     scene_age: u32,
     /// Battery's spin direction.
     spin: f32,
+    /// The GPU presets (see gpu.rs) and which one is showing, if any: they
+    /// come after the terminal styles in the rotation.
+    pub(super) gpu_names: Vec<String>,
+    pub(super) gpu: Option<usize>,
+    /// Where the GPU frame goes, set by the last draw (None: not showing).
+    pub(super) gpu_field: Option<Rect>,
+    /// A GPU preset's compile error, for the hint.
+    pub(super) gpu_error: Option<String>,
 }
 
 impl Viz {
@@ -275,6 +278,34 @@ impl Viz {
         if self.style.pixels() {
             self.ticks = (self.ticks + 1).min(2);
         }
+    }
+
+    /// The showing GPU preset's name.
+    pub(super) fn gpu_name(&self) -> Option<&str> {
+        self.gpu.and_then(|i| self.gpu_names.get(i)).map(String::as_str)
+    }
+
+    /// Stops in the rotation: the terminal styles, then the GPU presets.
+    pub(super) fn stops(&self) -> usize {
+        Style_::ALL.len() + self.gpu_names.len()
+    }
+
+    pub(super) fn stop(&self) -> usize {
+        match self.gpu {
+            Some(i) => Style_::ALL.len() + i,
+            None => Style_::ALL.iter().position(|&s| s == self.style).unwrap_or(0),
+        }
+    }
+
+    pub(super) fn set_stop(&mut self, n: usize) {
+        let terms = Style_::ALL.len();
+        if n < terms {
+            self.gpu = None;
+            self.style = Style_::ALL[n];
+        } else if n - terms < self.gpu_names.len() {
+            self.gpu = Some(n - terms);
+        }
+        self.gpu_error = None;
     }
 
     /// Still moving: keep animating even without new frames.
@@ -563,7 +594,11 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         &title,
         white(0xe8e8e8).add_modifier(Modifier::BOLD),
     );
-    let hint = format!("{} · v next · V gpu", app.viz.style.name());
+    let hint = match (app.viz.gpu_name(), &app.viz.gpu_error) {
+        (Some(_), Some(e)) => format!("{e} · t next"),
+        (Some(name), None) => format!("{name} hd · t next · V window"),
+        (None, _) => format!("{} · t next · V gpu window", app.viz.style.name()),
+    };
     let hw = hint.chars().count() as u16;
     text(
         buf,
@@ -581,7 +616,17 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         width: area.width - 4,
         height: area.height - 6,
     };
-    if app.viz.style.pixels() {
+    // A GPU preset: leave the field to the frame the player draws over it
+    // after this (skipped cells aren't written, so they don't erase it).
+    app.viz.gpu_field = None;
+    if app.viz.gpu.is_some() {
+        for y in field.top()..field.bottom() {
+            for x in field.left()..field.right() {
+                buf[(x, y)].set_diff_option(ratatui::buffer::CellDiffOption::Skip);
+            }
+        }
+        app.viz.gpu_field = Some(field);
+    } else if app.viz.style.pixels() {
         app.viz.paint(buf, field);
     }
     // One column per band when there's room; in a narrow window, as many
@@ -595,7 +640,11 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     let used = (col_w + gap) * cols;
     let x0 = field.x + (field.width.saturating_sub(used as u16)) / 2;
     let h = field.height as f32;
-    let cell_bands = if app.viz.style.pixels() { 0 } else { bands };
+    let cell_bands = if app.viz.style.pixels() || app.viz.gpu.is_some() {
+        0
+    } else {
+        bands
+    };
     for i in 0..cols.min(cell_bands) {
         let band = i * bands / cols;
         let (level, peak) = (app.viz.level[band], app.viz.peak[band]);
@@ -664,7 +713,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     }
 
     // An empty field reads as broken; say why it's still.
-    if s.status != Status::Playing && !app.viz.animating() {
+    if s.status != Status::Playing && !app.viz.animating() && app.viz.gpu.is_none() {
         let label = match s.status {
             Status::Paused => "paused",
             Status::Loading => "loading…",

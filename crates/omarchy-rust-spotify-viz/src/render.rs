@@ -1,6 +1,7 @@
 //! The GPU side. Two textures take turns: each frame the preset renders
 //! into one while reading the other (the previous frame) for feedback, and
-//! a final pass copies the result to the window with a soft glow.
+//! a final pass copies the result out with a soft glow: to the window, or
+//! (offscreen, for the player's terminal) to a texture read back as pixels.
 
 use std::sync::Arc;
 
@@ -25,11 +26,28 @@ struct Target {
     size: (u32, u32),
 }
 
+enum Output {
+    Window {
+        surface: wgpu::Surface<'static>,
+        config: wgpu::SurfaceConfiguration,
+    },
+    /// An RGBA texture and a buffer to read it back through (rows padded
+    /// to 256 bytes, as copies require).
+    Offscreen {
+        view: wgpu::TextureView,
+        texture: wgpu::Texture,
+        readback: wgpu::Buffer,
+        size: (u32, u32),
+        row: u32,
+    },
+}
+
+const OFFSCREEN_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
 pub struct Gpu {
-    surface: wgpu::Surface<'static>,
+    output: Output,
     device: wgpu::Device,
     queue: wgpu::Queue,
-    config: wgpu::SurfaceConfiguration,
     scene_format: wgpu::TextureFormat,
     layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
@@ -43,35 +61,41 @@ pub struct Gpu {
     scene_binds: Vec<wgpu::BindGroup>,
     blit_binds: Vec<wgpu::BindGroup>,
     cur: usize,
-    /// Rendering resolution relative to the window.
+    /// Rendering resolution relative to the output.
     scale: f32,
     pub backend: String,
 }
 
+async fn device(
+    instance: &wgpu::Instance,
+    surface: Option<&wgpu::Surface<'_>>,
+) -> Result<(wgpu::Adapter, wgpu::Device, wgpu::Queue)> {
+    let adapter = instance
+        .request_adapter(&wgpu::RequestAdapterOptions {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            compatible_surface: surface,
+            ..Default::default()
+        })
+        .await
+        .context("no GPU adapter found")?;
+    let (device, queue) = adapter
+        .request_device(&wgpu::DeviceDescriptor {
+            label: Some("viz"),
+            required_limits: adapter.limits(),
+            ..Default::default()
+        })
+        .await?;
+    Ok((adapter, device, queue))
+}
+
 impl Gpu {
+    /// Drawing into a window.
     pub async fn new(window: Arc<Window>, display: OwnedDisplayHandle, scale: f32) -> Result<Self> {
         let instance = wgpu::Instance::new(
             wgpu::InstanceDescriptor::new_with_display_handle(Box::new(display)).with_env(),
         );
         let surface = instance.create_surface(window.clone())?;
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                compatible_surface: Some(&surface),
-                ..Default::default()
-            })
-            .await
-            .context("no GPU adapter can draw to this window")?;
-        let info = adapter.get_info();
-        let backend = format!("{} ({:?})", info.name, info.backend);
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                label: Some("viz"),
-                required_limits: adapter.limits(),
-                ..Default::default()
-            })
-            .await?;
-
+        let (adapter, device, queue) = device(&instance, Some(&surface)).await?;
         let size = window.inner_size();
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
@@ -83,7 +107,36 @@ impl Gpu {
         }
         config.present_mode = wgpu::PresentMode::Fifo;
         surface.configure(&device, &config);
+        let format = config.format;
+        Self::build(
+            adapter,
+            device,
+            queue,
+            Output::Window { surface, config },
+            format,
+            scale,
+        )
+    }
 
+    /// Drawing into memory, `width` x `height` pixels, read back each frame.
+    pub async fn offscreen(width: u32, height: u32) -> Result<Self> {
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle().with_env());
+        let (adapter, device, queue) = device(&instance, None).await?;
+        let output = offscreen_output(&device, width, height);
+        Self::build(adapter, device, queue, output, OFFSCREEN_FORMAT, 1.0)
+    }
+
+    fn build(
+        adapter: wgpu::Adapter,
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        output: Output,
+        out_format: wgpu::TextureFormat,
+        scale: f32,
+    ) -> Result<Self> {
+        let info = adapter.get_info();
+        let backend = format!("{} ({:?})", info.name, info.backend);
         // Half floats keep slow feedback fades smooth (8 bits leave smears).
         let scene_format = if adapter
             .get_texture_format_features(wgpu::TextureFormat::Rgba16Float)
@@ -150,15 +203,14 @@ impl Gpu {
             &device,
             &pipeline_layout,
             include_str!("shaders/blit.wgsl"),
-            config.format,
+            out_format,
         )
         .map_err(|e| anyhow::anyhow!("blit shader: {e}"))?;
 
         let mut gpu = Gpu {
-            surface,
+            output,
             device,
             queue,
-            config,
             scene_format,
             layout,
             pipeline_layout,
@@ -195,10 +247,27 @@ impl Gpu {
         if width == 0 || height == 0 {
             return;
         }
-        self.config.width = width;
-        self.config.height = height;
-        self.surface.configure(&self.device, &self.config);
+        match &mut self.output {
+            Output::Window { surface, config } => {
+                config.width = width;
+                config.height = height;
+                surface.configure(&self.device, config);
+            }
+            Output::Offscreen { size, .. } => {
+                if *size == (width, height) {
+                    return;
+                }
+                self.output = offscreen_output(&self.device, width, height);
+            }
+        }
         self.make_targets();
+    }
+
+    fn output_size(&self) -> (u32, u32) {
+        match &self.output {
+            Output::Window { config, .. } => (config.width, config.height),
+            Output::Offscreen { size, .. } => *size,
+        }
     }
 
     pub fn scene_size(&self) -> (u32, u32) {
@@ -206,9 +275,10 @@ impl Gpu {
     }
 
     fn make_targets(&mut self) {
+        let (w, h) = self.output_size();
         let size = (
-            ((self.config.width as f32 * self.scale) as u32).max(1),
-            ((self.config.height as f32 * self.scale) as u32).max(1),
+            ((w as f32 * self.scale) as u32).max(1),
+            ((h as f32 * self.scale) as u32).max(1),
         );
         self.targets = (0..2)
             .map(|i| {
@@ -272,15 +342,7 @@ impl Gpu {
         for t in &self.targets {
             enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("clear"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &t.view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
+                color_attachments: &[Some(attachment(&t.view))],
                 ..Default::default()
             });
         }
@@ -288,53 +350,150 @@ impl Gpu {
     }
 
     /// One frame: the preset into the next texture, reading the current
-    /// one; then that to the window, scaled by `fade`.
-    pub fn render(&mut self, u: &Uniforms, fade: f32) {
-        let frame = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
-                self.surface.configure(&self.device, &self.config);
-                return;
+    /// one; then that to the output, scaled by `fade`. Offscreen, returns
+    /// the pixels (RGBA, rows tightly packed).
+    pub fn render(&mut self, u: &Uniforms, fade: f32) -> Option<Vec<u8>> {
+        let (surface_tex, out_view) = match &self.output {
+            Output::Window { surface, config } => {
+                let t = match surface.get_current_texture() {
+                    wgpu::CurrentSurfaceTexture::Success(t)
+                    | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
+                    wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
+                        surface.configure(&self.device, config);
+                        return None;
+                    }
+                    _ => return None,
+                };
+                let v = t.texture.create_view(&Default::default());
+                (Some(t), v)
             }
-            _ => return,
+            Output::Offscreen { view, .. } => (None, view.clone()),
         };
         self.queue
             .write_buffer(&self.uniforms, 0, bytemuck::bytes_of(u));
         self.queue
             .write_buffer(&self.fade, 0, bytemuck::bytes_of(&[fade, 0.0, 0.0, 0.0]));
-        let (prev, next) = (self.cur, 1 - self.cur);
-        let out = frame.texture.create_view(&Default::default());
+        let prev = self.cur;
         // No working preset yet (its shader failed): show the black frame,
-        // so the window still appears and its title can say why.
-        let next = if self.scene.is_some() { next } else { prev };
+        // so the output still appears and can say why.
+        let next = if self.scene.is_some() { 1 - prev } else { prev };
         let mut passes = Vec::new();
         if let Some(scene) = &self.scene {
             passes.push((&self.targets[next].view, scene, &self.scene_binds[prev]));
         }
-        passes.push((&out, &self.blit, &self.blit_binds[next]));
+        passes.push((&out_view, &self.blit, &self.blit_binds[next]));
         let mut enc = self.device.create_command_encoder(&Default::default());
         for (view, pipe, bind) in passes {
             let mut pass = enc.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: None,
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view,
-                    depth_slice: None,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                })],
+                color_attachments: &[Some(attachment(view))],
                 ..Default::default()
             });
             pass.set_pipeline(pipe);
             pass.set_bind_group(0, bind, &[]);
             pass.draw(0..3, 0..1);
         }
+        if let Output::Offscreen {
+            texture,
+            readback,
+            size,
+            row,
+            ..
+        } = &self.output
+        {
+            enc.copy_texture_to_buffer(
+                wgpu::TexelCopyTextureInfo {
+                    texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyBufferInfo {
+                    buffer: readback,
+                    layout: wgpu::TexelCopyBufferLayout {
+                        offset: 0,
+                        bytes_per_row: Some(*row),
+                        rows_per_image: Some(size.1),
+                    },
+                },
+                wgpu::Extent3d {
+                    width: size.0,
+                    height: size.1,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
         self.queue.submit([enc.finish()]);
-        self.queue.present(frame);
         self.cur = next;
+        if let Some(t) = surface_tex {
+            self.queue.present(t);
+            return None;
+        }
+        let Output::Offscreen {
+            readback, size, row, ..
+        } = &self.output
+        else {
+            return None;
+        };
+        let slice = readback.slice(..);
+        slice.map_async(wgpu::MapMode::Read, |_| {});
+        self.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .ok()?;
+        let data = slice.get_mapped_range().ok()?;
+        let mut px = Vec::with_capacity((size.0 * size.1 * 4) as usize);
+        for y in 0..size.1 as usize {
+            let start = y * *row as usize;
+            px.extend_from_slice(&data[start..start + size.0 as usize * 4]);
+        }
+        drop(data);
+        readback.unmap();
+        Some(px)
+    }
+}
+
+fn offscreen_output(device: &wgpu::Device, width: u32, height: u32) -> Output {
+    let (width, height) = (width.max(1), height.max(1));
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("out"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: OFFSCREEN_FORMAT,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+        view_formats: &[],
+    });
+    let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let row = (width * 4).div_ceil(align) * align;
+    let readback = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("readback"),
+        size: (row * height) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    Output::Offscreen {
+        view: texture.create_view(&Default::default()),
+        texture,
+        readback,
+        size: (width, height),
+        row,
+    }
+}
+
+fn attachment(view: &wgpu::TextureView) -> wgpu::RenderPassColorAttachment<'_> {
+    wgpu::RenderPassColorAttachment {
+        view,
+        depth_slice: None,
+        resolve_target: None,
+        ops: wgpu::Operations {
+            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+            store: wgpu::StoreOp::Store,
+        },
     }
 }
 

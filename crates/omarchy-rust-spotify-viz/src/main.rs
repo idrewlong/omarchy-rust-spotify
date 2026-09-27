@@ -7,8 +7,10 @@
 //! save them.
 
 mod feed;
+mod headless;
 mod presets;
 mod render;
+mod sixel;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -33,6 +35,8 @@ const HELP: &str = "\
 omarchy-rust-spotify-viz: GPU visualizations of what's playing
 
 usage: omarchy-rust-spotify-viz [--preset NAME] [--scale 0.25..1] [--list]
+       omarchy-rust-spotify-viz --sixel WxH [--preset NAME]
+         (no window: Sixel frames on stdout, for the player's terminal)
 
 keys:  left/right or v/V  preset       space  play/pause
        n / p              next/prev    f      fullscreen
@@ -44,7 +48,7 @@ of any built-in with --list). They reload each time you save.";
 
 /// The audio as the shaders see it: smoothed over frames, time-based so the
 /// motion is the same at any frame rate.
-struct Audio {
+pub(crate) struct Audio {
     bands: [f32; BANDS],
     wave: [f32; WAVE],
     levels: [f32; 3],
@@ -53,7 +57,30 @@ struct Audio {
     seen_beats: Option<u32>,
     travel: f32,
     /// 1 while audio arrives, easing to 0 after it stops.
-    alive: f32,
+    pub(crate) alive: f32,
+}
+
+impl Audio {
+    /// The shaders' inputs for a frame of `size` pixels.
+    pub(crate) fn uniforms(&self, size: (u32, u32), time: f32, dt: f32, frame: u32) -> Uniforms {
+        let (w, h) = size;
+        let l = self.levels;
+        let mut u = Uniforms {
+            res: [w as f32, h as f32, w as f32 / h.max(1) as f32, frame as f32],
+            clock: [time, dt, self.pulse, self.beats as f32],
+            levels: [l[0], l[1], l[2], (l[0] + l[1] + l[2]) / 3.0],
+            motion: [self.travel, 0.0, 0.0, 0.0],
+            spectrum: [[0.0; 4]; 12],
+            wave: [[0.0; 4]; 64],
+        };
+        for (i, v) in self.bands.iter().enumerate() {
+            u.spectrum[i / 4][i % 4] = *v;
+        }
+        for (i, v) in self.wave.iter().enumerate() {
+            u.wave[i / 4][i % 4] = *v;
+        }
+        u
+    }
 }
 
 impl Default for Audio {
@@ -77,7 +104,7 @@ fn stretch(v: f32) -> f32 {
 }
 
 impl Audio {
-    fn update(&mut self, feed: &Feed, dt: f32) -> (String, bool) {
+    pub(crate) fn update(&mut self, feed: &Feed, dt: f32) -> (String, bool) {
         let s = feed.lock().unwrap();
         let recent = s
             .last_frame
@@ -200,38 +227,9 @@ impl App {
     }
 
     fn uniforms(&self, dt: f32) -> Uniforms {
-        let (w, h) = self.gpu.as_ref().map_or((1, 1), |g| g.scene_size());
-        let a = &self.audio;
-        let mut u = Uniforms {
-            res: [
-                w as f32,
-                h as f32,
-                w as f32 / h.max(1) as f32,
-                self.frame as f32,
-            ],
-            clock: [
-                self.start.elapsed().as_secs_f32(),
-                dt,
-                a.pulse,
-                a.beats as f32,
-            ],
-            levels: [
-                a.levels[0],
-                a.levels[1],
-                a.levels[2],
-                (a.levels[0] + a.levels[1] + a.levels[2]) / 3.0,
-            ],
-            motion: [a.travel, 0.0, 0.0, 0.0],
-            spectrum: [[0.0; 4]; 12],
-            wave: [[0.0; 4]; 64],
-        };
-        for (i, v) in a.bands.iter().enumerate() {
-            u.spectrum[i / 4][i % 4] = *v;
-        }
-        for (i, v) in a.wave.iter().enumerate() {
-            u.wave[i / 4][i % 4] = *v;
-        }
-        u
+        let size = self.gpu.as_ref().map_or((1, 1), |g| g.scene_size());
+        self.audio
+            .uniforms(size, self.start.elapsed().as_secs_f32(), dt, self.frame)
     }
 
     fn key(&mut self, el: &ActiveEventLoop, key: &Key) {
@@ -363,6 +361,7 @@ impl ApplicationHandler for App {
 fn main() -> Result<()> {
     let mut preset: Option<String> = None;
     let mut scale = 1.0f32;
+    let mut sixel: Option<(u32, u32)> = None;
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -373,6 +372,21 @@ fn main() -> Result<()> {
                     .and_then(|s| s.parse().ok())
                     .unwrap_or(1.0f32)
                     .clamp(0.25, 1.0)
+            }
+            "--sixel" => {
+                let size = args.next().unwrap_or_default();
+                let (w, h) = size
+                    .split_once('x')
+                    .and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)))
+                    .ok_or_else(|| anyhow::anyhow!("--sixel needs a size like 640x360"))?;
+                sixel = Some((w, h));
+            }
+            // Just the names, one per line, for the player.
+            "--names" => {
+                for p in presets::load() {
+                    println!("{}", p.name);
+                }
+                return Ok(());
             }
             "--list" => {
                 for p in presets::load() {
@@ -395,6 +409,9 @@ fn main() -> Result<()> {
     let current = preset
         .and_then(|n| presets.iter().position(|p| p.name == n))
         .unwrap_or(0);
+    if let Some((w, h)) = sixel {
+        return headless::run(presets, current, w, h);
+    }
     let event_loop = EventLoop::new()?;
     let mut app = App {
         feed: feed::start(),
