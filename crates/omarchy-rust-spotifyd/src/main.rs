@@ -290,19 +290,27 @@ async fn run() -> Result<()> {
             tracing::debug!(?cmd, "command");
             // Login waits on the browser; don't hold up other commands.
             if cmd == Command::Login {
+                // Cancel a sign-in still waiting for approval, and wait for it
+                // to be gone: its listener holds port 8989 until dropped.
+                let old = ctx.login.lock().unwrap().take();
+                if let Some(old) = old {
+                    old.abort();
+                    let _ = old.await;
+                    let _ = ctx.inputs.send(state::Input::LoginUrl(None));
+                }
+                let _ = ctx.inputs.send(state::Input::LoginError(None));
                 let task = tokio::spawn({
                     let ctx = ctx.clone();
                     async move {
-                        if let Err(e) = login(ctx).await {
+                        if let Err(e) = login(ctx.clone()).await {
                             tracing::warn!("sign-in failed: {e:#}");
+                            let _ = ctx
+                                .inputs
+                                .send(state::Input::LoginError(Some(format!("{e:#}"))));
                         }
                     }
                 });
-                if let Some(old) = ctx.login.lock().unwrap().replace(task) {
-                    // Dropping its listener frees port 8989 for the new one.
-                    old.abort();
-                    let _ = ctx.inputs.send(state::Input::LoginUrl(None));
-                }
+                *ctx.login.lock().unwrap() = Some(task);
             } else if let Err(e) = execute(&ctx, cmd).await {
                 tracing::warn!("command failed: {e:#}");
             }

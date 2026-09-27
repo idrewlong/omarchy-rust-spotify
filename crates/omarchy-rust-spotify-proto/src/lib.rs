@@ -103,6 +103,8 @@ pub struct PlayerState {
     /// Set while a sign-in waits for approval: the client that asked opens
     /// it in a browser. Cleared when sign-in finishes or gives up.
     pub login_url: Option<String>,
+    /// Why the last sign-in failed, until the next one starts.
+    pub login_error: Option<String>,
 }
 
 impl PlayerState {

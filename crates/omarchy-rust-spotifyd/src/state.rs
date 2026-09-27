@@ -26,6 +26,7 @@ pub enum Input {
     Error(Option<DaemonError>),
     /// A sign-in URL is waiting for approval (or no longer is).
     LoginUrl(Option<String>),
+    LoginError(Option<String>),
 }
 
 /// One published change.
@@ -184,6 +185,7 @@ pub async fn run(
                     }
                     Input::Error(error) => state.error = error,
                     Input::LoginUrl(url) => state.login_url = url,
+                    Input::LoginError(e) => state.login_error = e,
                 }
                 (received, old, Effects::default())
             }

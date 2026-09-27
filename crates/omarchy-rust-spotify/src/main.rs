@@ -309,6 +309,12 @@ fn open_url(url: &str) {
 fn login() -> Result<()> {
     let mut c = Client::connect()?;
     let mut state = c.subscribe()?;
+    // A URL already in the state belongs to an older sign-in, which this one
+    // cancels: only open the one that appears after our request.
+    let stale_url = state.login_url.clone();
+    // Likewise an error left from an earlier attempt: the daemon clears it
+    // when this sign-in starts, so only trust errors after that.
+    let mut error_armed = state.login_error.is_none();
     let id = c.id();
     c.send(&ClientMsg::Cmd {
         id,
@@ -344,7 +350,11 @@ fn login() -> Result<()> {
             state = serde_json::from_value(v)?;
         }
 
-        if let Some(url) = state.login_url.as_ref().filter(|_| !opened) {
+        if let Some(url) = state
+            .login_url
+            .as_ref()
+            .filter(|u| !opened && Some(*u) != stale_url.as_ref())
+        {
             opened = true;
             println!("Approve the sign-in in your browser:\n  {url}");
             open_url(url);
@@ -361,6 +371,11 @@ fn login() -> Result<()> {
                 state.device_name
             );
             return Ok(());
+        }
+        match &state.login_error {
+            None => error_armed = true,
+            Some(e) if error_armed => bail!("sign-in failed: {e}"),
+            Some(_) => {}
         }
         if state.error == Some(DaemonError::PremiumRequired) {
             bail!("Spotify Premium is required for playback");
