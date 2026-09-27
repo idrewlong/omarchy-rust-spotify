@@ -52,10 +52,12 @@ Requires Spotify Premium (Spotify's rule for third-party playback).
 - Your own visualizers: a WGSL file in `~/.config/omarchy-rust-spotify/viz/`
   (start from [`examples/viz/ring.wgsl`](examples/viz/ring.wgsl)). It shows
   up among the GPU presets and reloads each time you save.
-- Faster library and search: sign in with your own
+- Artists, albums and playlists in search results: add your own
   [Spotify developer app](https://developer.spotify.com/dashboard) (redirect
   URI `http://127.0.0.1:8989/login`) with `omarchy-rust-spotify login-app
-  <client-id>`. Your own app means your own rate limit, shared with no one.
+  <client-id>`. Optional: without it your playlists, Liked Songs, albums and
+  song search come through the player's own Spotify connection. With it,
+  the rate limit is yours alone, not shared with every other user.
 
 ## Update
 

@@ -93,7 +93,9 @@ Across the rest of the field:
 
 ## Gaps to close (roughly in order)
 
-1. **One-command install through the marketplace.** Today we install with
+1. ~~**One-command install**~~ (0.1.0: plugin at the root, release
+   binaries, Set up / Update in the bar card). Left: preview image and the
+   marketplace submission. Was: **One-command install through the marketplace.** Today we install with
    `scripts/dev-install.sh` from a clone. Needed:
    - `manifest.json` at a plugin repo's root (the marketplace wants
      `root-plugin` layout; ours is in `omarchy/plugin/`): either a small
@@ -104,9 +106,9 @@ Across the rest of the field:
      installs the binaries and the service, and a clean uninstaller;
    - a `preview.png`, README install/removal sections, category `Widgets`,
      tags `bar`, `media`, `quickshell`, then the submission issue.
-2. **Onboarding without a developer app.** Make the personal client ID
-   optional: browse through librespot metadata by default and offer the
-   Web API app as a speed-up, instead of a requirement.
+2. ~~**Onboarding without a developer app.**~~ Done (0.1.1): playlists
+   from the rootlist, Liked Songs and song search from Spotify's context
+   service, playlist contents from metadata. The app is an optional extra.
 3. **Library parity with the leader:** queue view and editing, like/unlike
    everywhere (incl. the bar card), artist and album pages, playlist
    add/remove, Spotify Connect device switching (incl. Sonos via Connect,

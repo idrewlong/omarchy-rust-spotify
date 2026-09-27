@@ -98,6 +98,11 @@ impl WebApi {
 
     /// The configured app's client id: config.toml, else spotify-player's.
     pub fn client_id(&self) -> Option<String> {
+        // Everything through the playback session instead, as for someone
+        // without an app (for testing that path).
+        if std::env::var_os("OMARCHY_RUST_SPOTIFY_NO_WEB_API").is_some() {
+            return None;
+        }
         if let Some(id) = self.config.borrow().client_id.clone() {
             return Some(id);
         }

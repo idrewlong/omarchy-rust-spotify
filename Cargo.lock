@@ -3128,7 +3128,7 @@ dependencies = [
 
 [[package]]
 name = "omarchy-rust-spotify"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "image",
@@ -3143,7 +3143,7 @@ dependencies = [
 
 [[package]]
 name = "omarchy-rust-spotify-proto"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "libc",
  "serde",
@@ -3152,7 +3152,7 @@ dependencies = [
 
 [[package]]
 name = "omarchy-rust-spotify-viz"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "bytemuck",
@@ -3166,7 +3166,7 @@ dependencies = [
 
 [[package]]
 name = "omarchy-rust-spotifyd"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
@@ -3181,9 +3181,11 @@ dependencies = [
  "librespot-core",
  "librespot-metadata",
  "librespot-playback",
+ "librespot-protocol",
  "mpris-server",
  "notify",
  "omarchy-rust-spotify-proto",
+ "protobuf",
  "rand 0.9.5",
  "realfft",
  "reqwest",

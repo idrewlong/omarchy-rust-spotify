@@ -8,6 +8,11 @@
 //!   playlists Spotify owns (Spotify's 2026 developer rules return 403 for
 //!   those), albums, and artist top tracks.
 //!
+//! Without the user's own app everything still works through the playback
+//! session: playlists from their rootlist, Liked Songs and search (songs)
+//! from Spotify's context service, playlist contents from metadata. The app
+//! adds speed and search results for artists, albums and playlists.
+//!
 //! Answers are cached briefly so moving around the library doesn't repeat
 //! requests.
 
@@ -36,6 +41,40 @@ pub struct Library {
     /// Spotify's recently-played history doesn't include librespot's plays.
     history: Mutex<HashMap<String, u64>>,
     history_file: std::path::PathBuf,
+    /// A context's track URIs (Liked Songs, a search), fetched whole and
+    /// kept briefly so paging through them doesn't refetch.
+    contexts: Mutex<HashMap<String, (Instant, Vec<String>)>>,
+}
+
+fn needs_app(e: &anyhow::Error) -> bool {
+    e.downcast_ref::<NeedsApp>().is_some()
+}
+
+/// A playlist URI in today's form: the rootlist still says
+/// spotify:user:NAME:playlist:ID for older ones.
+fn playlist_uri(uri: &str) -> Option<String> {
+    let id = uri.rsplit_once(":playlist:")?.1;
+    Some(format!("spotify:playlist:{id}"))
+}
+
+/// Track URIs from a context page (as JSON), and the next page's URL.
+fn page_tracks(page: &Value) -> (Vec<String>, Option<String>) {
+    let uris = page
+        .get("tracks")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|t| t.get("uri").and_then(Value::as_str))
+        .filter(|u| u.starts_with("spotify:track:"))
+        .map(String::from)
+        .collect();
+    let next = page
+        .get("nextPageUrl")
+        .or_else(|| page.get("next_page_url"))
+        .and_then(Value::as_str)
+        .filter(|u| !u.is_empty())
+        .map(String::from);
+    (uris, next)
 }
 
 /// "2026-09-26T01:51:12.454Z" -> unix ms (UTC, as Spotify sends it).
@@ -222,6 +261,7 @@ impl Library {
             cache: Default::default(),
             history: Mutex::new(history),
             history_file,
+            contexts: Default::default(),
         }
     }
 
@@ -265,6 +305,119 @@ impl Library {
             }
         }
         out
+    }
+
+    /// The user's playlists from their rootlist, in their library's order
+    /// (folders flattened).
+    async fn rootlist(&self) -> Result<Vec<Item>> {
+        use protobuf::Message;
+        let bytes = self.session().spclient().get_rootlist(0, Some(500)).await?;
+        let list =
+            librespot_protocol::playlist4_external::SelectedListContent::parse_from_bytes(&bytes)?;
+        let contents = list.contents.get_or_default();
+        // Names come as meta items: one per item, or one per playlist when
+        // folder markers are among the items.
+        let aligned = contents.meta_items.len() == contents.items.len();
+        let me = self.session().username();
+        let mut meta = contents.meta_items.iter();
+        let mut out = Vec::new();
+        for item in &contents.items {
+            let uri = item.uri.clone().unwrap_or_default();
+            let Some(uri) = playlist_uri(&uri) else {
+                if aligned {
+                    meta.next();
+                }
+                continue;
+            };
+            let m = meta.next();
+            let name = m
+                .and_then(|m| m.attributes.as_ref())
+                .and_then(|a| a.name.clone())
+                .unwrap_or_else(|| "Playlist".into());
+            // The rootlist names owners by account id: say "you" for yours.
+            let owner = m.and_then(|m| m.owner_username.clone()).map(|o| {
+                if o == me { "you".to_string() } else { o }
+            });
+            let subtitle = match (owner, m.and_then(|m| m.length)) {
+                (Some(owner), Some(n)) => format!("by {owner} · {n} tracks"),
+                (None, Some(n)) => format!("{n} tracks"),
+                _ => String::new(),
+            };
+            out.push(Item {
+                kind: ItemKind::Playlist,
+                uri,
+                name,
+                subtitle,
+                duration_ms: None,
+                image: None,
+            });
+        }
+        Ok(out)
+    }
+
+    /// All track URIs of a context (Liked Songs is
+    /// spotify:user:NAME:collection, a search spotify:search:words), page by
+    /// page, up to `limit`.
+    async fn context_tracks(&self, uri: &str, limit: usize) -> Result<Vec<String>> {
+        if let Some((at, uris)) = self.contexts.lock().unwrap().get(uri)
+            && at.elapsed() < CACHE_TTL
+        {
+            return Ok(uris.clone());
+        }
+        let spclient = self.session().spclient().clone();
+        let ctx = spclient.get_context(uri).await?;
+        let mut uris: Vec<String> = Vec::new();
+        let mut next: Vec<String> = Vec::new();
+        for page in &ctx.pages {
+            uris.extend(
+                page.tracks
+                    .iter()
+                    .filter_map(|t| t.uri.clone())
+                    .filter(|u| u.starts_with("spotify:track:")),
+            );
+            if page.tracks.is_empty()
+                && let Some(url) = page.page_url.clone().filter(|u| !u.is_empty())
+            {
+                next.push(url);
+            }
+            if let Some(url) = page.next_page_url.clone().filter(|u| !u.is_empty()) {
+                next.push(url);
+            }
+        }
+        // Further pages, one after another (each names the next).
+        while let Some(url) = next.pop() {
+            if uris.len() >= limit {
+                break;
+            }
+            let bytes = spclient.get_next_page(&url).await?;
+            let page: Value = serde_json::from_slice(&bytes)?;
+            let (more, following) = page_tracks(&page);
+            uris.extend(more);
+            next.extend(following);
+        }
+        uris.truncate(limit);
+        self.contexts
+            .lock()
+            .unwrap()
+            .insert(uri.to_string(), (Instant::now(), uris.clone()));
+        Ok(uris)
+    }
+
+    /// A page of a context's tracks, with their metadata.
+    async fn context_page(&self, uri: &str, title: &str, offset: u32) -> Result<Section> {
+        let all = self.context_tracks(uri, 10_000).await?;
+        let page: Vec<SpotifyUri> = all
+            .iter()
+            .skip(offset as usize)
+            .take(PAGE as usize)
+            .filter_map(|u| SpotifyUri::from_uri(u).ok())
+            .collect();
+        Ok(Section {
+            title: title.into(),
+            items: self.tracks_meta(page).await,
+            total: all.len() as u32,
+            offset,
+        })
     }
 
     fn session(&self) -> Session {
@@ -352,6 +505,30 @@ impl Library {
         }
     }
 
+    /// The user's playlists through their own app: everything, 50 at a
+    /// time, up to 500.
+    async fn web_playlists(&self) -> Result<Vec<Item>> {
+        let mut items = Vec::new();
+        let mut offset = 0;
+        loop {
+            let Some(page) = self
+                .api
+                .get(&format!("me/playlists?limit=50&offset={offset}"))
+                .await?
+            else {
+                break;
+            };
+            let got = items_of(&page, playlist_item);
+            let n = got.len() as u32;
+            items.extend(got);
+            offset += 50;
+            if n < 50 || offset >= total(&page).min(500) {
+                break;
+            }
+        }
+        Ok(items)
+    }
+
     async fn handle(&self, req: Request) -> Result<Answer> {
         Ok(Answer::Sections(match req {
             Request::Api { path } => {
@@ -361,25 +538,10 @@ impl Library {
             }
 
             Request::Playlists { order } => {
-                let mut items = Vec::new();
-                let mut offset = 0;
-                // Everything, 50 at a time, up to 500.
-                loop {
-                    let Some(page) = self
-                        .api
-                        .get(&format!("me/playlists?limit=50&offset={offset}"))
-                        .await?
-                    else {
-                        break;
-                    };
-                    let got = items_of(&page, playlist_item);
-                    let n = got.len() as u32;
-                    items.extend(got);
-                    offset += 50;
-                    if n < 50 || offset >= total(&page).min(500) {
-                        break;
-                    }
-                }
+                let mut items = match self.web_playlists().await {
+                    Err(e) if needs_app(&e) => self.rootlist().await?,
+                    other => other?,
+                };
                 match order {
                     PlaylistOrder::Library => {}
                     PlaylistOrder::Name => items.sort_by_key(|i| i.name.to_lowercase()),
@@ -401,11 +563,20 @@ impl Library {
             }
 
             Request::Tracks { of, offset } if of == "liked" => {
-                let page = self
+                let page = match self
                     .api
                     .get(&format!("me/tracks?limit={PAGE}&offset={offset}"))
-                    .await?
-                    .unwrap_or(Value::Null);
+                    .await
+                {
+                    Err(e) if needs_app(&e) => {
+                        let user = self.session().username();
+                        let uri = format!("spotify:user:{user}:collection");
+                        return Ok(Answer::Sections(vec![
+                            self.context_page(&uri, "Liked Songs", offset).await?,
+                        ]));
+                    }
+                    other => other?.unwrap_or(Value::Null),
+                };
                 let items = items_of(&page, |i| i.get("track").and_then(track_item));
                 vec![Section {
                     title: "Liked Songs".into(),
@@ -417,13 +588,18 @@ impl Library {
 
             Request::Tracks { of, offset } if of.starts_with("spotify:playlist:") => {
                 let id = of.trim_start_matches("spotify:playlist:");
-                match self
+                let page = match self
                     .api
                     .get(&format!(
                         "playlists/{id}/items?limit={PAGE}&offset={offset}"
                     ))
-                    .await?
+                    .await
                 {
+                    // No app: through metadata, like Spotify-owned ones.
+                    Err(e) if needs_app(&e) => None,
+                    other => other?,
+                };
+                match page {
                     Some(page) => {
                         let items = items_of(&page, |i| {
                             i.get("item")
@@ -464,13 +640,23 @@ impl Library {
             Request::Search { q } => {
                 let q: String = form_urlencoded::byte_serialize(q.as_bytes()).collect();
                 // Spotify caps search pages at 10 for developer apps.
-                let json = self
+                let json = match self
                     .api
                     .get(&format!(
                         "search?q={q}&type=track,artist,album,playlist&limit=10"
                     ))
-                    .await?
-                    .unwrap_or(Value::Null);
+                    .await
+                {
+                    // No app: songs, from Spotify's search context.
+                    Err(e) if needs_app(&e) => {
+                        let uri = format!("spotify:search:{q}");
+                        let songs = self.context_page(&uri, "Songs", 0).await?;
+                        return Ok(Answer::Sections(
+                            Some(songs).filter(|s| !s.items.is_empty()).into_iter().collect(),
+                        ));
+                    }
+                    other => other?.unwrap_or(Value::Null),
+                };
                 let section = |key: &str, title: &str, f: fn(&Value) -> Option<Item>| {
                     let part = json.get(key).cloned().unwrap_or(Value::Null);
                     Section {
