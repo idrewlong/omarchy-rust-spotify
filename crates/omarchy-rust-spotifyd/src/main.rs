@@ -1,10 +1,12 @@
 //! omarchy-rust-spotifyd: the background player. Owns the librespot session
 //! and Connect device, and publishes state to MPRIS and the IPC socket.
 
+mod config;
 mod covers;
 mod ipc;
 mod latency;
 mod mpris;
+mod notify;
 mod oauth;
 mod secrets;
 mod sink;
@@ -216,6 +218,17 @@ async fn run() -> Result<()> {
     let cache = Cache::new(Some(&secrets_dir), Some(&dir), None, None)?;
     let secrets = secrets::Secrets::new(cache.clone(), secrets_dir);
 
+    let config_path = config::path();
+    let initial_config = config::load(&config_path).unwrap_or_else(|e| {
+        tracing::warn!("{}: {e}; using defaults", config_path.display());
+        config::Config::default()
+    });
+    let (config_tx, config_rx) = watch::channel(initial_config.clone());
+    // Kept alive for the life of the daemon.
+    let _config_watcher = config::watch(config_path, config_tx)
+        .map_err(|e| tracing::warn!("not watching config: {e:#}"))
+        .ok();
+
     let session_config = SessionConfig {
         device_id: device_id(&dir)?,
         ..Default::default()
@@ -224,7 +237,11 @@ async fn run() -> Result<()> {
 
     let mixer = mixer::find(None).context("no mixer")?(MixerConfig::default())?;
     let player_config = PlayerConfig {
-        bitrate: Bitrate::Bitrate320,
+        bitrate: match initial_config.bitrate {
+            96 => Bitrate::Bitrate96,
+            160 => Bitrate::Bitrate160,
+            _ => Bitrate::Bitrate320,
+        },
         ..Default::default()
     };
     let interrupt = sink::Interrupt::default();
@@ -244,7 +261,7 @@ async fn run() -> Result<()> {
     let covers = covers::Covers::new(dir.join("covers"), session_rx)?;
 
     tokio::spawn(state::run(
-        supervisor::DEVICE_NAME.into(),
+        initial_config.device_name.clone(),
         events,
         inputs_tx.clone(),
         inputs_rx,
@@ -328,9 +345,12 @@ async fn run() -> Result<()> {
             spirc: spirc_tx,
             session: session_tx,
             credentials_changed,
+            config: config_rx.clone(),
         }
         .run(),
     );
+
+    tokio::spawn(notify::run(updates_tx.subscribe(), config_rx));
 
     supervisor::notify_systemd("READY=1");
 

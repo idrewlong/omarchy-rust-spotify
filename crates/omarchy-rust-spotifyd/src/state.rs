@@ -27,6 +27,7 @@ pub enum Input {
     /// A sign-in URL is waiting for approval (or no longer is).
     LoginUrl(Option<String>),
     LoginError(Option<String>),
+    DeviceName(String),
 }
 
 /// One published change.
@@ -186,6 +187,7 @@ pub async fn run(
                     Input::Error(error) => state.error = error,
                     Input::LoginUrl(url) => state.login_url = url,
                     Input::LoginError(e) => state.login_error = e,
+                    Input::DeviceName(name) => state.device_name = name,
                 }
                 (received, old, Effects::default())
             }

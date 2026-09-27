@@ -12,10 +12,9 @@ use librespot_playback::{mixer::Mixer, player::Player};
 use omarchy_rust_spotify_proto::DaemonError;
 use tokio::sync::{Notify, mpsc, watch};
 
+use crate::config::Config;
 use crate::secrets::Secrets;
 use crate::state::Input;
-
-pub const DEVICE_NAME: &str = "Omarchy";
 
 const BACKOFF_MIN: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
@@ -35,6 +34,7 @@ pub struct Supervisor {
     pub session: watch::Sender<Session>,
     /// Fired when new credentials are saved (login), to retry immediately.
     pub credentials_changed: Arc<Notify>,
+    pub config: watch::Receiver<Config>,
 }
 
 fn classify(err: &librespot_core::Error) -> DaemonError {
@@ -76,8 +76,10 @@ impl Supervisor {
                 }
             };
 
+            let device_name = self.config.borrow().device_name.clone();
+            let _ = self.inputs.send(Input::DeviceName(device_name.clone()));
             let connect_config = ConnectConfig {
-                name: DEVICE_NAME.into(),
+                name: device_name.clone(),
                 device_type: DeviceType::Computer,
                 ..Default::default()
             };
@@ -93,11 +95,30 @@ impl Supervisor {
                 Ok((spirc, task)) => {
                     let started = Instant::now();
                     self.secrets.after_connect();
-                    let _ = self.spirc.send(Some(Arc::new(spirc)));
+                    let spirc = Arc::new(spirc);
+                    let _ = self.spirc.send(Some(spirc.clone()));
                     let _ = self.inputs.send(Input::Connected(true));
-                    tracing::info!("Connect device \"{DEVICE_NAME}\" is up");
+                    tracing::info!("Connect device \"{device_name}\" is up");
 
-                    task.await;
+                    // A new device name needs a new Connect registration:
+                    // reconnect as soon as it changes.
+                    let mut config = self.config.clone();
+                    let mut renamed = false;
+                    tokio::pin!(task);
+                    loop {
+                        tokio::select! {
+                            _ = &mut task => break,
+                            changed = config.changed(), if !renamed => {
+                                if changed.is_err() {
+                                    renamed = true;
+                                } else if config.borrow().device_name != device_name {
+                                    tracing::info!("device name changed; reconnecting");
+                                    let _ = spirc.shutdown();
+                                    renamed = true;
+                                }
+                            }
+                        }
+                    }
 
                     let _ = self.spirc.send(None);
                     let _ = self.inputs.send(Input::Connected(false));
