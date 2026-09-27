@@ -33,6 +33,10 @@ Requires Spotify Premium (Spotify's rule for third-party playback).
   playlists (most recently played first, like Spotify) and search. `t`
   steps through the skins and every visualizer, `T` goes back. Space
   plays/pauses, `n`/`p` skip, `/` searches.
+- **Lyrics:** a skin of its own. Synced lyrics follow the song, the
+  current line highlighted in the middle; click a line to jump there.
+  From [LRCLIB](https://lrclib.net), the open lyrics database; also
+  `omarchy-rust-spotify lyrics` in a terminal.
 - **Visualizers:** seven terminal styles (bars, mirror, scope, fire storm,
   musical colors, alchemy, battery), then five GPU presets (battery,
   alchemy, spectrum, ambience, warp) drawn in full resolution right in the

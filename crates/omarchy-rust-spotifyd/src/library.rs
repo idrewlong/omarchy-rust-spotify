@@ -44,6 +44,45 @@ pub struct Library {
     /// A context's track URIs (Liked Songs, a search), fetched whole and
     /// kept briefly so paging through them doesn't refetch.
     contexts: Mutex<HashMap<String, (Instant, Vec<String>)>>,
+    /// Lyrics answers by track URI (they don't change).
+    lyrics_cache: Mutex<HashMap<String, Value>>,
+}
+
+/// An LRCLIB record as the protocol's lyrics answer: synced lines from its
+/// LRC ("[01:23.45] words"), else its plain lines.
+fn lyrics_json(r: &Value) -> Value {
+    let synced = r.get("syncedLyrics").and_then(Value::as_str).unwrap_or("");
+    let plain = r.get("plainLyrics").and_then(Value::as_str).unwrap_or("");
+    let mut lines = Vec::new();
+    for line in synced.lines() {
+        let Some(rest) = line.strip_prefix('[') else {
+            continue;
+        };
+        let Some((stamp, text)) = rest.split_once(']') else {
+            continue;
+        };
+        let Some((m, sec)) = stamp.split_once(':') else {
+            continue;
+        };
+        let (Ok(m), Ok(sec)) = (m.parse::<u64>(), sec.parse::<f64>()) else {
+            continue;
+        };
+        let ms = m * 60_000 + (sec * 1000.0).round() as u64;
+        lines.push(serde_json::json!({ "ms": ms, "text": text.trim() }));
+    }
+    let is_synced = !lines.is_empty();
+    if !is_synced {
+        lines = plain
+            .lines()
+            .map(|t| serde_json::json!({ "ms": 0, "text": t.trim() }))
+            .collect();
+    }
+    serde_json::json!({
+        "synced": is_synced,
+        "provider": "LRCLIB",
+        "instrumental": r.get("instrumental").and_then(Value::as_bool).unwrap_or(false),
+        "lines": lines,
+    })
 }
 
 fn needs_app(e: &anyhow::Error) -> bool {
@@ -262,6 +301,7 @@ impl Library {
             history: Mutex::new(history),
             history_file,
             contexts: Default::default(),
+            lyrics_cache: Default::default(),
         }
     }
 
@@ -335,9 +375,9 @@ impl Library {
                 .and_then(|a| a.name.clone())
                 .unwrap_or_else(|| "Playlist".into());
             // The rootlist names owners by account id: say "you" for yours.
-            let owner = m.and_then(|m| m.owner_username.clone()).map(|o| {
-                if o == me { "you".to_string() } else { o }
-            });
+            let owner = m
+                .and_then(|m| m.owner_username.clone())
+                .map(|o| if o == me { "you".to_string() } else { o });
             let subtitle = match (owner, m.and_then(|m| m.length)) {
                 (Some(owner), Some(n)) => format!("by {owner} · {n} tracks"),
                 (None, Some(n)) => format!("{n} tracks"),
@@ -418,6 +458,87 @@ impl Library {
             total: all.len() as u32,
             offset,
         })
+    }
+
+    /// A track's lyrics from LRCLIB (lrclib.net, the open lyrics
+    /// database): synced line by line when it has them, plain otherwise.
+    /// Spotify's own lyrics service only answers its official apps.
+    async fn lyrics(&self, uri: &SpotifyUri) -> Result<Value> {
+        let key = uri.to_uri()?;
+        if let Some(v) = self.lyrics_cache.lock().unwrap().get(&key) {
+            return Ok(v.clone());
+        }
+        let track = Track::get(&self.session(), uri).await?;
+        let artist = track
+            .artists
+            .first()
+            .map(|a| a.name.clone())
+            .unwrap_or_default();
+        let secs = (track.duration / 1000).to_string();
+        let http = reqwest::Client::builder()
+            .user_agent(concat!(
+                "omarchy-rust-spotify/",
+                env!("CARGO_PKG_VERSION"),
+                " (https://github.com/idrewlong/omarchy-rust-spotify)"
+            ))
+            .timeout(Duration::from_secs(10))
+            .build()?;
+        let exact = http
+            .get("https://lrclib.net/api/get")
+            .query(&[
+                ("artist_name", artist.as_str()),
+                ("track_name", track.name.as_str()),
+                ("album_name", track.album.name.as_str()),
+                ("duration", secs.as_str()),
+            ])
+            .send()
+            .await?;
+        tracing::debug!(
+            "lyrics lookup: {artist:?} / {:?} / {:?} / {secs}s -> {}",
+            track.name,
+            track.album.name,
+            exact.status()
+        );
+        let found: Option<Value> = if exact.status().is_success() {
+            Some(exact.json().await?)
+        } else {
+            // No exact match (album or length differ): the closest-length
+            // search result for the same title and artist.
+            let results: Vec<Value> = http
+                .get("https://lrclib.net/api/search")
+                .query(&[
+                    ("artist_name", artist.as_str()),
+                    ("track_name", track.name.as_str()),
+                ])
+                .send()
+                .await?
+                .json()
+                .await
+                .unwrap_or_default();
+            let want = track.duration as f64 / 1000.0;
+            results
+                .into_iter()
+                .filter(|r| {
+                    r.get("duration")
+                        .and_then(Value::as_f64)
+                        .is_some_and(|d| (d - want).abs() < 5.0)
+                })
+                .min_by(|a, b| {
+                    let d = |r: &Value| (r["duration"].as_f64().unwrap_or(0.0) - want).abs();
+                    d(a).total_cmp(&d(b))
+                })
+        };
+        let Some(r) = found else {
+            // Not cached: it may be a passing miss.
+            return Ok(serde_json::json!({ "synced": false, "provider": "", "lines": [] }));
+        };
+        let answer = lyrics_json(&r);
+        let mut cache = self.lyrics_cache.lock().unwrap();
+        if cache.len() > 200 {
+            cache.clear();
+        }
+        cache.insert(key, answer.clone());
+        Ok(answer)
     }
 
     fn session(&self) -> Session {
@@ -537,6 +658,14 @@ impl Library {
                 ));
             }
 
+            Request::Lyrics { uri } => {
+                let uri = SpotifyUri::from_uri(&uri)?;
+                if !matches!(uri, SpotifyUri::Track { .. }) {
+                    bail!("lyrics are for tracks");
+                }
+                return Ok(Answer::Json(self.lyrics(&uri).await?));
+            }
+
             Request::Playlists { order } => {
                 let mut items = match self.web_playlists().await {
                     Err(e) if needs_app(&e) => self.rootlist().await?,
@@ -652,7 +781,10 @@ impl Library {
                         let uri = format!("spotify:search:{q}");
                         let songs = self.context_page(&uri, "Songs", 0).await?;
                         return Ok(Answer::Sections(
-                            Some(songs).filter(|s| !s.items.is_empty()).into_iter().collect(),
+                            Some(songs)
+                                .filter(|s| !s.items.is_empty())
+                                .into_iter()
+                                .collect(),
                         ));
                     }
                     other => other?.unwrap_or(Value::Null),
@@ -721,7 +853,23 @@ impl Library {
 
 #[cfg(test)]
 mod tests {
-    use super::parse_utc_ms;
+    use super::{lyrics_json, parse_utc_ms};
+
+    #[test]
+    fn reads_lrc_lines() {
+        let r = serde_json::json!({
+            "syncedLyrics": "[00:19.05] Jesus, don't cry\n[01:02.50] I'll be around\n",
+            "plainLyrics": "unused",
+        });
+        let v = lyrics_json(&r);
+        assert_eq!(v["synced"], true);
+        assert_eq!(v["lines"][0]["ms"], 19_050);
+        assert_eq!(v["lines"][1]["ms"], 62_500);
+        assert_eq!(v["lines"][1]["text"], "I'll be around");
+        let plain = lyrics_json(&serde_json::json!({ "plainLyrics": "a\nb" }));
+        assert_eq!(plain["synced"], false);
+        assert_eq!(plain["lines"].as_array().unwrap().len(), 2);
+    }
 
     #[test]
     fn parses_spotify_timestamps() {

@@ -294,7 +294,10 @@ async fn execute(ctx: &Ctx, cmd: Command) -> Result<()> {
 }
 
 fn main() -> Result<()> {
-    if std::env::args().nth(1).is_some_and(|a| a == "--version" || a == "-V") {
+    if std::env::args()
+        .nth(1)
+        .is_some_and(|a| a == "--version" || a == "-V")
+    {
         println!("omarchy-rust-spotifyd {}", env!("CARGO_PKG_VERSION"));
         return Ok(());
     }

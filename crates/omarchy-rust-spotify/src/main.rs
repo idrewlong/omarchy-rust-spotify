@@ -3,6 +3,7 @@
 //!   tui                 full-screen player
 //!   status              current track and state
 //!   ls ...              browse: playlists | liked | <uri> | search <q> | artist <uri>
+//!   lyrics [uri]        the lyrics of a track (default: what's playing), timed
 //!   login               sign in to Spotify in the browser
 //!   logout              forget the saved login
 //!   login-app [id]      sign in to your Spotify app (library, search)
@@ -648,6 +649,50 @@ fn main() -> Result<()> {
                         if beat { "  BEAT" } else { "" }
                     );
                 }
+            }
+            Ok(())
+        }
+        // The lyrics of a track, or of what's playing, timed when Spotify
+        // has them synced.
+        Some("lyrics") => {
+            let uri = match args.get(1) {
+                Some(u) => u.clone(),
+                None => {
+                    let mut c = Client::connect()?;
+                    let id = c.id();
+                    c.send(&ClientMsg::Sub {
+                        id,
+                        topics: vec!["player".into()],
+                    })?;
+                    loop {
+                        if let ServerMsg::Snap { state, .. } = c.recv()? {
+                            break state.track.context("nothing is playing")?.uri;
+                        }
+                    }
+                }
+            };
+            let ServerMsg::Json { value, .. } =
+                request(omarchy_rust_spotify_proto::Request::Lyrics { uri })?
+            else {
+                bail!("unexpected answer");
+            };
+            let synced = value["synced"].as_bool().unwrap_or(false);
+            // Written, not println!: piped into head, a closed stdout just
+            // ends the listing.
+            let mut out = std::io::stdout().lock();
+            let lines = value["lines"].as_array().cloned().unwrap_or_default();
+            if lines.is_empty() {
+                let _ = writeln!(out, "no lyrics found");
+            }
+            for line in lines {
+                let text = line["text"].as_str().unwrap_or("");
+                let _ = match (synced, line["ms"].as_u64()) {
+                    (true, Some(ms)) => writeln!(out, "{:>5}  {text}", fmt_ms(ms as u32)),
+                    _ => writeln!(out, "{text}"),
+                };
+            }
+            if let Some(p) = value["provider"].as_str().filter(|p| !p.is_empty()) {
+                let _ = writeln!(out, "\n(lyrics: {p})");
             }
             Ok(())
         }

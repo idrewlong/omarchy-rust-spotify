@@ -38,6 +38,7 @@ mod gpu;
 mod ipod;
 mod itunes;
 mod library;
+mod lyrics;
 mod paint;
 mod visualizer;
 mod winamp;
@@ -69,6 +70,8 @@ enum Skin {
     Visualizer,
     Classic,
     Wmp2000,
+    /// The lyrics of what's playing, following the song.
+    Lyrics,
 }
 
 impl Skin {
@@ -81,10 +84,11 @@ impl Skin {
         )
     }
 
-    const ORDER: [Skin; 9] = [
+    const ORDER: [Skin; 10] = [
         Skin::Library,
         Skin::Classic,
         Skin::Wmp2000,
+        Skin::Lyrics,
         Skin::Winamp,
         Skin::Itunes,
         Skin::Ipod,
@@ -388,6 +392,7 @@ struct App {
     browser: library::Browser,
     ipod: ipod::Ipod,
     viz: visualizer::Viz,
+    lyrics: lyrics::Lyrics,
 }
 
 #[derive(Debug, Clone)]
@@ -543,6 +548,7 @@ fn draw(f: &mut Frame, app: &mut App) {
         Skin::Visualizer => visualizer::draw(f, app),
         Skin::Classic => classic::draw(f, app),
         Skin::Wmp2000 => wmp::draw(f, app),
+        Skin::Lyrics => lyrics::draw(f, app),
     }
 }
 
@@ -851,6 +857,7 @@ fn event_loop(
         browser: Default::default(),
         ipod: Default::default(),
         viz: Default::default(),
+        lyrics: Default::default(),
     };
     app.viz.style = VIZ_OVERRIDE
         .get()
@@ -885,6 +892,13 @@ fn event_loop(
         }
         terminal.draw(|f| draw(f, &mut app))?;
         show_gpu_frame(&mut app, &mut gpu_stream);
+        // The lyrics skin asks for each new track's lyrics.
+        if app.connected && app.settings.layout.skin == Skin::Lyrics {
+            let uri = app.state.track.as_ref().map(|t| t.uri.clone());
+            if let Some((id, req)) = app.lyrics.wanted(uri.as_deref()) {
+                send_msg(&mut writer, &ClientMsg::Req { id, req });
+            }
+        }
 
         // While playing, wake 4x a second to move the clock; otherwise once
         // a second for update/config checks only.
@@ -976,6 +990,12 @@ fn event_loop(
                     treble,
                     beat,
                 }) => app.viz.frame(bands, wave, [bass, mid, treble], beat),
+                Msg::Server(ServerMsg::Json { id, ref value }) if app.lyrics.req == Some(id) => {
+                    app.lyrics.on_json(value);
+                }
+                Msg::Server(ServerMsg::Err { id, .. }) if app.lyrics.req == Some(id) => {
+                    app.lyrics.on_error();
+                }
                 Msg::Server(ref m @ (ServerMsg::Res { .. } | ServerMsg::Err { .. })) => {
                     app.browser.on_response(m);
                 }
@@ -1115,6 +1135,7 @@ pub(super) mod tests {
             hits: Vec::new(),
             browser: Default::default(),
             ipod: Default::default(),
+            lyrics: Default::default(),
             viz: Default::default(),
         }
     }
@@ -1159,6 +1180,7 @@ pub(super) mod tests {
             Skin::Visualizer,
             Skin::Classic,
             Skin::Wmp2000,
+            Skin::Lyrics,
         ] {
             for playing in [false, true] {
                 for (w, h) in [

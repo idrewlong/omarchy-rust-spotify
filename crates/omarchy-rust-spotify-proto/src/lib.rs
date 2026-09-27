@@ -163,6 +163,11 @@ pub enum Request {
     Artist { uri: String },
     /// Debugging: a raw GET of a Web API path, answered with `json`.
     Api { path: String },
+    /// A track's lyrics (from LRCLIB), answered with `json`:
+    /// `{"synced": bool, "provider": "LRCLIB", "instrumental": bool,
+    ///   "lines": [{"ms": 1234, "text": "..."}]}` (`ms` is when the line
+    /// starts; 0 for every line when not synced; no lines when none found).
+    Lyrics { uri: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]

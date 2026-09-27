@@ -114,7 +114,9 @@ Across the rest of the field:
    add/remove, Spotify Connect device switching (incl. Sonos via Connect,
    like ciryon's), podcasts and audiobooks (ninepointlabs).
 4. **Keyboard discoverability:** a `?` overlay of every key, per skin.
-5. **Lyrics:** synced lyrics as a panel/skin (LRCLIB), no second plugin.
+5. ~~**Lyrics**~~ Done: a Lyrics skin (synced, click a line to seek) and
+   `omarchy-rust-spotify lyrics`, from LRCLIB. (Spotify's own lyrics
+   service 404s for librespot sessions.)
 6. **The bar card:** like button, volume, device picker, a mini visualizer.
 7. **Polish they lack:** multi-monitor-safe bar widget, settings that
    persist (ours live in tui.toml/config.toml already), clear errors for

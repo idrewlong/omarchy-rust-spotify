@@ -14,6 +14,7 @@
 #   library   find and play music (default), in your Omarchy theme
 #   classic   big now-playing, in your Omarchy theme
 #   wmp2000   Windows 2000 era Media Player
+#   lyrics    the words of what's playing, following the song (LRCLIB)
 #   winamp    Winamp 2.x base skin: green LCD, playlist editor
 #   itunes    iTunes 4, 2003 brushed metal, striped song list
 #   ipod      2004 iPod with a clickable click wheel and menus
