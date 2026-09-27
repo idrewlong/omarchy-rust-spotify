@@ -23,6 +23,8 @@ pub struct Config {
     /// 96, 160 or 320 kbps. Applies on the next daemon start.
     pub bitrate: u16,
     pub notifications: Notifications,
+    /// Your Spotify app's client id, for library and search.
+    pub client_id: Option<String>,
 }
 
 impl Default for Config {
@@ -31,6 +33,7 @@ impl Default for Config {
             device_name: "Omarchy".into(),
             bitrate: 320,
             notifications: Notifications::default(),
+            client_id: None,
         }
     }
 }

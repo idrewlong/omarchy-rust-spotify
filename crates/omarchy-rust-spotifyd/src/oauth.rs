@@ -33,6 +33,35 @@ fn random_token(bytes: usize) -> String {
     URL_SAFE_NO_PAD.encode(buf)
 }
 
+/// What Spotify's token endpoint returns (for a code or a refresh).
+#[derive(Debug, Clone)]
+pub struct Tokens {
+    pub access_token: String,
+    /// Spotify may rotate it on refresh; absent means keep the old one.
+    pub refresh_token: Option<String>,
+    pub expires_in: u64,
+}
+
+impl Tokens {
+    pub fn from_json(json: &serde_json::Value) -> Result<Self> {
+        Ok(Self {
+            access_token: json
+                .get("access_token")
+                .and_then(|t| t.as_str())
+                .map(str::to_owned)
+                .with_context(|| format!("no access token in response: {json}"))?,
+            refresh_token: json
+                .get("refresh_token")
+                .and_then(|t| t.as_str())
+                .map(str::to_owned),
+            expires_in: json
+                .get("expires_in")
+                .and_then(|t| t.as_u64())
+                .unwrap_or(3600),
+        })
+    }
+}
+
 pub struct Pending {
     pub url: String,
     client_id: String,
@@ -89,9 +118,8 @@ async fn respond(stream: &mut tokio::net::TcpStream, status: &str, body: &str) {
 }
 
 impl Pending {
-    /// Wait for the browser redirect and exchange the code for an access
-    /// token.
-    pub async fn finish(self) -> Result<String> {
+    /// Wait for the browser redirect and exchange the code for tokens.
+    pub async fn finish(self) -> Result<Tokens> {
         let code = tokio::time::timeout(APPROVAL_TIMEOUT, self.wait_for_code())
             .await
             .context("timed out waiting for the browser")??;
@@ -132,7 +160,7 @@ impl Pending {
         }
     }
 
-    async fn exchange(&self, code: &str) -> Result<String> {
+    async fn exchange(&self, code: &str) -> Result<Tokens> {
         let body = form_urlencoded::Serializer::new(String::new())
             .append_pair("grant_type", "authorization_code")
             .append_pair("code", code)
@@ -146,10 +174,7 @@ impl Pending {
         let resp = HttpClient::new(None).request_body(req).await?;
         let json: serde_json::Value =
             serde_json::from_slice(&resp).context("token response wasn't JSON")?;
-        json.get("access_token")
-            .and_then(|t| t.as_str())
-            .map(str::to_owned)
-            .with_context(|| format!("no access token in response: {json}"))
+        Tokens::from_json(&json)
     }
 }
 

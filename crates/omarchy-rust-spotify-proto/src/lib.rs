@@ -135,6 +135,58 @@ pub enum ClientMsg {
         #[serde(flatten)]
         cmd: Command,
     },
+    /// A question with an answer (`res` or `err` with the same id).
+    Req {
+        id: u64,
+        #[serde(flatten)]
+        req: Request,
+    },
+}
+
+/// Browsing requests, answered from the Web API.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "req", rename_all = "snake_case")]
+pub enum Request {
+    /// The user's playlists.
+    Playlists,
+    /// A page of tracks from "liked", or a spotify:playlist:/spotify:album: URI.
+    Tracks { of: String, offset: u32 },
+    /// Tracks, artists, albums and playlists matching `q`.
+    Search { q: String },
+    /// An artist's top tracks and albums.
+    Artist { uri: String },
+    /// Debugging: a raw GET of a Web API path, answered with `json`.
+    Api { path: String },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ItemKind {
+    Track,
+    Album,
+    Artist,
+    Playlist,
+}
+
+/// One row in a list: enough to show it and to act on it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Item {
+    pub kind: ItemKind,
+    pub uri: String,
+    pub name: String,
+    /// Artists for a track, "by owner · N tracks" for a playlist, and so on.
+    pub subtitle: String,
+    pub duration_ms: Option<u32>,
+    pub image: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Section {
+    pub title: String,
+    pub items: Vec<Item>,
+    /// Total items available (for paging), and where this page starts.
+    pub total: u32,
+    pub offset: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -163,6 +215,17 @@ pub enum Command {
     Login,
     /// Forget the saved login and disconnect.
     Logout,
+    /// Sign in to the user's own Spotify app (library and search), like
+    /// `Login`. A new `client_id` is saved to config.toml.
+    LoginApp {
+        client_id: Option<String>,
+    },
+    /// Play `context` ("liked", or a playlist/album/artist URI), starting
+    /// at `track` if given. A bare track URI as context plays just it.
+    PlayIn {
+        context: String,
+        track: Option<String>,
+    },
 }
 
 /// Daemon → client.
@@ -194,6 +257,16 @@ pub enum ServerMsg {
         id: u64,
         code: String,
         message: String,
+    },
+    /// The answer to a browsing request.
+    Res {
+        id: u64,
+        sections: Vec<Section>,
+    },
+    /// The answer to `Request::Api`.
+    Json {
+        id: u64,
+        value: serde_json::Value,
     },
 }
 

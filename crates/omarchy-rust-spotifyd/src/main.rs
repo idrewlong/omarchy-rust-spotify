@@ -5,6 +5,7 @@ mod config;
 mod covers;
 mod ipc;
 mod latency;
+mod library;
 mod mpris;
 mod notify;
 mod oauth;
@@ -12,6 +13,7 @@ mod secrets;
 mod sink;
 mod state;
 mod supervisor;
+mod webapi;
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
@@ -90,7 +92,9 @@ struct Ctx {
     secrets: secrets::Secrets,
     client_id: String,
     credentials_changed: Arc<Notify>,
+    session: watch::Receiver<Session>,
     inputs: mpsc::UnboundedSender<state::Input>,
+    library: Arc<library::Library>,
     /// The sign-in in progress; a new one replaces (aborts) it.
     login: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
 }
@@ -98,23 +102,100 @@ struct Ctx {
 /// Sign in: publish the authorize URL for the client to open, wait for the
 /// redirect, save the login and make the supervisor reconnect. See oauth.rs
 /// for why the daemon doesn't open the browser itself.
-async fn login(ctx: Arc<Ctx>) -> Result<()> {
-    let pending = oauth::start(&ctx.client_id, OAUTH_SCOPES).await?;
+async fn login(ctx: Arc<Ctx>, app: Option<Option<String>>) -> Result<()> {
+    // Which sign-in: the playback session (Spotify's desktop client id), or
+    // the user's own app for the Web API.
+    let (client_id, scopes): (String, &[&str]) = match &app {
+        None => (ctx.client_id.clone(), OAUTH_SCOPES),
+        Some(given) => {
+            let id = given
+                .clone()
+                .or_else(|| ctx.library.api.client_id())
+                .ok_or_else(|| anyhow::anyhow!("no app client id: pass one to login-app"))?;
+            if !(id.len() == 32 && id.chars().all(|c| c.is_ascii_hexdigit())) {
+                anyhow::bail!("a client id is 32 hex characters");
+            }
+            (id, webapi::SCOPES)
+        }
+    };
+    let pending = oauth::start(&client_id, scopes).await?;
     let _ = ctx
         .inputs
         .send(state::Input::LoginUrl(Some(pending.url.clone())));
     let result = pending.finish().await;
     let _ = ctx.inputs.send(state::Input::LoginUrl(None));
-    let token = result?;
+    let tokens = result?;
+
+    if app.is_some() {
+        ctx.library.api.signed_in(&client_id, tokens).await;
+        remember_client_id(&client_id);
+        tracing::info!("signed in to app {client_id}");
+        return Ok(());
+    }
     // librespot trades this for reusable credentials once connected, and
     // saves those in its place.
-    ctx.secrets
-        .save_session(&librespot_core::authentication::Credentials::with_access_token(token));
+    ctx.secrets.save_session(
+        &librespot_core::authentication::Credentials::with_access_token(tokens.access_token),
+    );
     tracing::info!("signed in; reconnecting");
     if let Some(spirc) = ctx.spirc.borrow().as_ref() {
         let _ = spirc.shutdown();
     }
     ctx.credentials_changed.notify_one();
+    Ok(())
+}
+
+/// Add `client-id` to config.toml unless one is set (the watcher picks it up).
+fn remember_client_id(id: &str) {
+    let path = config::path();
+    let text = std::fs::read_to_string(&path).unwrap_or_default();
+    if text
+        .lines()
+        .any(|l| l.trim_start().starts_with("client-id"))
+    {
+        return;
+    }
+    let mut text = text;
+    if !text.is_empty() && !text.ends_with('\n') {
+        text.push('\n');
+    }
+    text.push_str(&format!("client-id = \"{id}\"\n"));
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    let _ = std::fs::write(&path, text);
+}
+
+/// Play a context from a given track (library/search picks).
+fn play_in(
+    spirc: &Spirc,
+    username: &str,
+    active: bool,
+    context: String,
+    track: Option<String>,
+) -> Result<()> {
+    use librespot_connect::{LoadRequest, LoadRequestOptions, PlayingTrack};
+    let context = if context == "liked" {
+        format!("spotify:user:{username}:collection")
+    } else {
+        context
+    };
+    let options = LoadRequestOptions {
+        start_playing: true,
+        seek_to: 0,
+        context_options: None,
+        playing_track: track.map(PlayingTrack::Uri),
+    };
+    let request = if context.starts_with("spotify:track:") {
+        LoadRequest::from_tracks(vec![context], options)
+    } else {
+        LoadRequest::from_context_uri(context, options)
+    };
+    // load() does nothing unless this is the active device.
+    if !active {
+        spirc.activate()?;
+    }
+    spirc.load(request)?;
     Ok(())
 }
 
@@ -174,7 +255,13 @@ async fn execute(ctx: &Ctx, cmd: Command) -> Result<()> {
         Command::Volume { pct } => {
             spirc.set_volume((pct.min(100) as u32 * u16::MAX as u32 / 100) as u16)?
         }
-        Command::Login | Command::Logout => unreachable!("handled elsewhere"),
+        Command::PlayIn { context, track } => {
+            let username = ctx.session.borrow().username();
+            play_in(spirc, &username, active, context, track)?
+        }
+        Command::Login | Command::Logout | Command::LoginApp { .. } => {
+            unreachable!("handled elsewhere")
+        }
     }
     Ok(())
 }
@@ -258,7 +345,7 @@ async fn run() -> Result<()> {
     let (session_tx, session_rx) = watch::channel(session);
     let (spirc_tx, spirc_rx) = watch::channel::<Option<Arc<Spirc>>>(None);
     let credentials_changed = Arc::new(Notify::new());
-    let covers = covers::Covers::new(dir.join("covers"), session_rx)?;
+    let covers = covers::Covers::new(dir.join("covers"), session_rx.clone())?;
 
     tokio::spawn(state::run(
         initial_config.device_name.clone(),
@@ -272,11 +359,16 @@ async fn run() -> Result<()> {
 
     // The socket comes up before Spotify does, so clients can connect and
     // show "connecting" or "signed out" rather than "not running".
+    let library = Arc::new(library::Library::new(
+        webapi::WebApi::new(config_rx.clone(), secrets::secrets_dir()),
+        session_rx.clone(),
+    ));
+    let ipc_library = library.clone();
     let listener = ipc::bind(&omarchy_rust_spotify_proto::socket_path())?;
     tokio::spawn({
         let (state, updates, cmds) = (snapshot_rx.clone(), updates_tx.clone(), cmds_tx.clone());
         async move {
-            if let Err(e) = ipc::run(listener, state, updates, cmds).await {
+            if let Err(e) = ipc::run(listener, state, updates, cmds, ipc_library).await {
                 tracing::error!("IPC stopped: {e:#}");
             }
         }
@@ -299,14 +391,20 @@ async fn run() -> Result<()> {
         secrets: secrets.clone(),
         client_id: session_config.client_id.clone(),
         credentials_changed: credentials_changed.clone(),
+        session: session_rx.clone(),
         inputs: inputs_tx.clone(),
+        library: library.clone(),
         login: Default::default(),
     });
     tokio::spawn(async move {
         while let Some(cmd) = cmds_rx.recv().await {
             tracing::debug!(?cmd, "command");
             // Login waits on the browser; don't hold up other commands.
-            if cmd == Command::Login {
+            if let Command::Login | Command::LoginApp { .. } = cmd {
+                let app = match &cmd {
+                    Command::LoginApp { client_id } => Some(client_id.clone()),
+                    _ => None,
+                };
                 // Cancel a sign-in still waiting for approval, and wait for it
                 // to be gone: its listener holds port 8989 until dropped.
                 let old = ctx.login.lock().unwrap().take();
@@ -319,7 +417,7 @@ async fn run() -> Result<()> {
                 let task = tokio::spawn({
                     let ctx = ctx.clone();
                     async move {
-                        if let Err(e) = login(ctx.clone()).await {
+                        if let Err(e) = login(ctx.clone(), app).await {
                             tracing::warn!("sign-in failed: {e:#}");
                             let _ = ctx
                                 .inputs

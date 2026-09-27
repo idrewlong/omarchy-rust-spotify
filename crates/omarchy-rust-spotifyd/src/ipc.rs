@@ -11,6 +11,7 @@ use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, mpsc, watch};
 
+use crate::library::Library;
 use crate::state::Update;
 
 /// Bind the socket (0700 directory, 0600 socket). Done before anything else
@@ -35,6 +36,7 @@ pub async fn run(
     state: watch::Receiver<(u64, PlayerState)>,
     updates: broadcast::Sender<Arc<Update>>,
     cmds: mpsc::UnboundedSender<Command>,
+    library: Arc<Library>,
 ) -> anyhow::Result<()> {
     // SAFETY: getuid cannot fail.
     let uid = unsafe { libc::getuid() };
@@ -47,9 +49,14 @@ pub async fn run(
                 continue;
             }
         }
-        let (state, updates, cmds) = (state.clone(), updates.clone(), cmds.clone());
+        let (state, updates, cmds, library) = (
+            state.clone(),
+            updates.clone(),
+            cmds.clone(),
+            library.clone(),
+        );
         tokio::spawn(async move {
-            if let Err(e) = serve(stream, state, updates, cmds).await {
+            if let Err(e) = serve(stream, state, updates, cmds, library).await {
                 tracing::debug!("IPC client ended: {e:#}");
             }
         });
@@ -61,6 +68,7 @@ async fn serve(
     state: watch::Receiver<(u64, PlayerState)>,
     updates: broadcast::Sender<Arc<Update>>,
     cmds: mpsc::UnboundedSender<Command>,
+    library: Arc<Library>,
 ) -> anyhow::Result<()> {
     let (read, mut write) = stream.into_split();
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<ServerMsg>();
@@ -122,6 +130,14 @@ async fn serve(
                     state.clone(),
                     out_tx.clone(),
                 )));
+            }
+            // Answered on their own task: a slow Web API call must not hold
+            // up commands on this connection.
+            ClientMsg::Req { id, req } => {
+                let (library, out) = (library.clone(), out_tx.clone());
+                tokio::spawn(async move {
+                    let _ = out.send(library.answer(id, req).await);
+                });
             }
             ClientMsg::Cmd { id, cmd } => {
                 let reply = match cmds.send(cmd) {

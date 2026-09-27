@@ -2,8 +2,11 @@
 //!
 //!   tui                 full-screen player
 //!   status              current track and state
+//!   ls ...              browse: playlists | liked | <uri> | search <q> | artist <uri>
 //!   login               sign in to Spotify in the browser
 //!   logout              forget the saved login
+//!   login-app [id]      sign in to your Spotify app (library, search)
+//!   play <ctx> [track]  play liked / a playlist, album or artist URI
 //!   watch               stream state changes as JSON lines
 //!   cmd <command> [arg] play | pause | play-pause | next | prev |
 //!                       seek <ms> | shuffle <on|off> | repeat <off|context|track> |
@@ -389,9 +392,12 @@ impl Opened {
     }
 }
 
-fn login() -> Result<()> {
+/// `app`: sign in to the user's own Spotify app (library and search)
+/// instead of the playback session; `Some(None)` uses the configured id.
+fn login(app: Option<Option<String>>) -> Result<()> {
     let mut c = Client::connect()?;
     let mut state = c.subscribe()?;
+    let for_app = app.is_some();
     // A URL already in the state belongs to an older sign-in, which this one
     // cancels: only open the one that appears after our request.
     let stale_url = state.login_url.clone();
@@ -399,10 +405,11 @@ fn login() -> Result<()> {
     // when this sign-in starts, so only trust errors after that.
     let mut error_armed = state.login_error.is_none();
     let id = c.id();
-    c.send(&ClientMsg::Cmd {
-        id,
-        cmd: Command::Login,
-    })?;
+    let cmd = match app {
+        Some(client_id) => Command::LoginApp { client_id },
+        None => Command::Login,
+    };
+    c.send(&ClientMsg::Cmd { id, cmd })?;
     // Wake up every second so a sign-in that ends without a reconnect
     // (denied, timed out) doesn't leave us waiting forever.
     c.writer
@@ -463,6 +470,16 @@ fn login() -> Result<()> {
         if opened && !state.connected {
             saw_disconnect = true;
         }
+        // An app sign-in doesn't reconnect: done once the page is withdrawn
+        // and a moment has passed without an error.
+        if for_app
+            && url_cleared_at.is_some_and(|t| t.elapsed() > std::time::Duration::from_secs(1))
+            && state.login_error.is_none()
+        {
+            finish(&page);
+            println!("Signed in to your Spotify app: library and search are ready.");
+            return Ok(());
+        }
         if saw_disconnect && state.connected && state.error.is_none() {
             finish(&page);
             println!(
@@ -494,17 +511,107 @@ fn logout() -> Result<()> {
     Ok(())
 }
 
+/// Send a request and wait for its answer.
+fn request(req: omarchy_rust_spotify_proto::Request) -> Result<ServerMsg> {
+    let mut c = Client::connect()?;
+    let id = c.id();
+    c.send(&ClientMsg::Req { id, req })?;
+    loop {
+        match c.recv()? {
+            m @ (ServerMsg::Res { id: got, .. } | ServerMsg::Json { id: got, .. }) if got == id => {
+                return Ok(m);
+            }
+            ServerMsg::Err {
+                id: got,
+                code,
+                message,
+            } if got == id => bail!("{code}: {message}"),
+            _ => {}
+        }
+    }
+}
+
+/// `ls playlists | liked [offset] | <uri> [offset] | search <query> | artist <uri>`
+fn ls(args: &[String]) -> Result<()> {
+    use omarchy_rust_spotify_proto::Request;
+    let arg = |i: usize| args.get(i).cloned();
+    let offset = |i: usize| arg(i).and_then(|o| o.parse().ok()).unwrap_or(0);
+    let req = match arg(0).as_deref() {
+        Some("playlists") | None => Request::Playlists,
+        Some("liked") => Request::Tracks {
+            of: "liked".into(),
+            offset: offset(1),
+        },
+        Some("search") => Request::Search {
+            q: args[1..].join(" "),
+        },
+        Some("artist") => Request::Artist {
+            uri: arg(1).context("usage: ls artist <uri>")?,
+        },
+        Some(uri) if uri.starts_with("spotify:") => Request::Tracks {
+            of: uri.into(),
+            offset: offset(1),
+        },
+        Some(other) => bail!("ls: unknown target {other}"),
+    };
+    if let ServerMsg::Res { sections, .. } = request(req)? {
+        for sec in sections {
+            let end = sec.offset as usize + sec.items.len();
+            println!(
+                "== {} ({}-{} of {})",
+                sec.title,
+                sec.offset + 1,
+                end,
+                sec.total
+            );
+            for it in sec.items {
+                let dur = it.duration_ms.map(fmt_ms).unwrap_or_default();
+                println!(
+                    "  {:<42.42} {:<32.32} {:>5}  {}",
+                    it.name, it.subtitle, dur, it.uri
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("status") | None => status(),
         Some("watch") => watch(),
+        Some("ls") => ls(&args[1..]),
         Some("tui") => tui::run(),
-        Some("login") => login(),
+        Some("login") => login(None),
+        Some("login-app") => login(Some(args.get(1).cloned())),
+        Some("play") => {
+            let context = args
+                .get(1)
+                .context("usage: play <liked|uri> [track-uri]")?
+                .clone();
+            let track = args.get(2).cloned();
+            let mut c = Client::connect()?;
+            let id = c.id();
+            c.send(&ClientMsg::Cmd {
+                id,
+                cmd: Command::PlayIn { context, track },
+            })?;
+            Ok(())
+        }
         Some("logout") => logout(),
         Some("cmd") => cmd(&args[1..]),
         Some("debug") if args.get(1).map(String::as_str) == Some("latency") => {
             latency(args.get(2).map(|n| n.parse()).transpose()?.unwrap_or(20))
+        }
+        Some("debug") if args.get(1).map(String::as_str) == Some("api") => {
+            let path = args.get(2).context("usage: debug api <path>")?.clone();
+            if let ServerMsg::Json { value, .. } =
+                request(omarchy_rust_spotify_proto::Request::Api { path })?
+            {
+                println!("{}", serde_json::to_string_pretty(&value)?);
+            }
+            Ok(())
         }
         Some("debug") if args.get(1).map(String::as_str) == Some("roundtrip") => {
             roundtrip(args.get(2).map(|n| n.parse()).transpose()?.unwrap_or(20))
