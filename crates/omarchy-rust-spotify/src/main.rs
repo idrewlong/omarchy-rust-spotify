@@ -283,26 +283,106 @@ fn roundtrip(n: usize) -> Result<()> {
     Ok(())
 }
 
-/// Open a URL in the user's browser, in its own systemd unit when uwsm is
-/// around (so it doesn't belong to this terminal).
-fn open_url(url: &str) {
-    use std::process::{Command, Stdio};
-    let quiet = |c: &mut Command| {
-        c.stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null());
-    };
-    let mut uwsm = Command::new("uwsm-app");
-    uwsm.args(["--", "xdg-open", url]);
-    quiet(&mut uwsm);
-    let spawned = uwsm.spawn().or_else(|_| {
-        let mut xdg = Command::new("xdg-open");
-        xdg.arg(url);
-        quiet(&mut xdg);
-        xdg.spawn()
-    });
-    if spawned.is_err() {
-        eprintln!("(couldn't open a browser; open the link above yourself)");
+fn quiet(c: &mut std::process::Command) -> &mut std::process::Command {
+    use std::process::Stdio;
+    c.stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+}
+
+/// Hyprland windows right now as (address, class); empty outside Hyprland.
+fn windows() -> Vec<(String, String)> {
+    std::process::Command::new("hyprctl")
+        .args(["clients", "-j"])
+        .output()
+        .ok()
+        .and_then(|o| serde_json::from_slice::<serde_json::Value>(&o.stdout).ok())
+        .and_then(|v| v.as_array().cloned())
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|c| {
+            Some((
+                c.get("address")?.as_str()?.to_owned(),
+                c.get("class")?.as_str()?.to_owned(),
+            ))
+        })
+        .collect()
+}
+
+/// Chromium-family `--app` windows are classed `chrome-<host>__<path>-<profile>`.
+const LOGIN_WINDOW_CLASS: &str = "chrome-accounts.spotify.com";
+
+/// Where the sign-in page was opened.
+enum Opened {
+    /// A dedicated Omarchy web-app window we can close afterwards; its
+    /// Hyprland address is filled in once it appears.
+    Window {
+        before: Vec<String>,
+        address: Option<String>,
+    },
+    /// A tab in the default browser (not closable from outside).
+    Tab,
+    Failed,
+}
+
+/// Open the sign-in page. On Omarchy, as a small web-app window (same
+/// browser profile, so already signed in to Spotify) that can be closed
+/// once sign-in succeeds; a page can't close a tab it didn't open, but the
+/// compositor can close a window. Elsewhere, a tab via xdg-open. Either way
+/// in its own systemd unit when uwsm is around, not as a child of this
+/// terminal.
+fn open_login_page(url: &str) -> Opened {
+    use std::process::Command;
+    let before: Vec<String> = windows().into_iter().map(|(a, _)| a).collect();
+    if !before.is_empty()
+        && quiet(Command::new("omarchy-launch-webapp").arg(url))
+            .spawn()
+            .is_ok()
+    {
+        return Opened::Window {
+            before,
+            address: None,
+        };
+    }
+    let spawned = quiet(Command::new("uwsm-app").args(["--", "xdg-open", url]))
+        .spawn()
+        .or_else(|_| quiet(Command::new("xdg-open").arg(url)).spawn());
+    if spawned.is_ok() {
+        Opened::Tab
+    } else {
+        Opened::Failed
+    }
+}
+
+impl Opened {
+    /// Remember the first window that appeared after launching.
+    fn track(&mut self) {
+        if let Opened::Window {
+            before,
+            address: address @ None,
+        } = self
+        {
+            // Only a new window that is the Spotify sign-in page: never close
+            // something else that happened to open meanwhile.
+            *address = windows()
+                .into_iter()
+                .find(|(a, class)| !before.contains(a) && class.starts_with(LOGIN_WINDOW_CLASS))
+                .map(|(a, _)| a);
+        }
+    }
+
+    fn close(&self) {
+        if let Opened::Window {
+            address: Some(addr),
+            ..
+        } = self
+        {
+            let _ = quiet(std::process::Command::new("hyprctl").args([
+                "dispatch",
+                &format!("hl.dsp.window.close({{ window = \"address:{addr}\" }})"),
+            ]))
+            .status();
+        }
     }
 }
 
@@ -324,7 +404,7 @@ fn login() -> Result<()> {
     // (denied, timed out) doesn't leave us waiting forever.
     c.writer
         .set_read_timeout(Some(std::time::Duration::from_secs(1)))?;
-    let mut opened = false;
+    let mut page: Option<Opened> = None;
     let mut saw_disconnect = false;
     let mut url_cleared_at: Option<std::time::Instant> = None;
     loop {
@@ -353,12 +433,27 @@ fn login() -> Result<()> {
         if let Some(url) = state
             .login_url
             .as_ref()
-            .filter(|u| !opened && Some(*u) != stale_url.as_ref())
+            .filter(|u| page.is_none() && Some(*u) != stale_url.as_ref())
         {
-            opened = true;
             println!("Approve the sign-in in your browser:\n  {url}");
-            open_url(url);
+            let opened = open_login_page(url);
+            if matches!(opened, Opened::Failed) {
+                eprintln!("(couldn't open a browser; open the link above yourself)");
+            }
+            page = Some(opened);
         }
+        if let Some(p) = page.as_mut() {
+            p.track();
+        }
+        let opened = page.is_some();
+        // Leave the confirmation page up for a moment, then close the
+        // sign-in window (a no-op for a browser tab).
+        let finish = |page: &Option<Opened>| {
+            if let Some(p) = page {
+                std::thread::sleep(std::time::Duration::from_millis(1500));
+                p.close();
+            }
+        };
         if opened && state.login_url.is_none() && url_cleared_at.is_none() {
             url_cleared_at = Some(std::time::Instant::now());
         }
@@ -366,6 +461,7 @@ fn login() -> Result<()> {
             saw_disconnect = true;
         }
         if saw_disconnect && state.connected && state.error.is_none() {
+            finish(&page);
             println!(
                 "Signed in. \"{}\" is ready in your Spotify apps.",
                 state.device_name
@@ -374,7 +470,10 @@ fn login() -> Result<()> {
         }
         match &state.login_error {
             None => error_armed = true,
-            Some(e) if error_armed => bail!("sign-in failed: {e}"),
+            Some(e) if error_armed => {
+                finish(&page);
+                bail!("sign-in failed: {e}")
+            }
             Some(_) => {}
         }
         if state.error == Some(DaemonError::PremiumRequired) {

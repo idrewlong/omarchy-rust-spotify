@@ -68,9 +68,14 @@ pub async fn start(client_id: &str, scopes: &[&str]) -> Result<Pending> {
     })
 }
 
+// The CLI closes the sign-in window (an Omarchy web-app window) through the
+// compositor once the daemon has reconnected. window.close() here covers a
+// plain tab when Spotify redirects straight through (history of one entry);
+// browsers block it otherwise.
 const PAGE_OK: &str = "<!doctype html><meta charset=utf-8><title>Signed in</title>\
 <body style=\"font:16px system-ui;margin:4em;text-align:center\">\
-<h2>Signed in to Spotify</h2><p>You can close this tab.</p>";
+<h2>Signed in to Spotify</h2><p>You can close this window.</p>\
+<script>setTimeout(() => window.close(), 2500)</script>";
 const PAGE_ERR: &str = "<!doctype html><meta charset=utf-8><title>Sign-in failed</title>\
 <body style=\"font:16px system-ui;margin:4em;text-align:center\">\
 <h2>Sign-in didn't complete</h2><p>Run <code>omarchy-rust-spotify login</code> to try again.</p>";
