@@ -1,5 +1,6 @@
 //! omarchy-rust-spotify: the CLI. Talks to the daemon over its socket.
 //!
+//!   tui                 full-screen player
 //!   status              current track and state
 //!   login               sign in to Spotify in the browser
 //!   logout              forget the saved login
@@ -14,6 +15,8 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 
 use anyhow::{Context, Result, bail};
+mod tui;
+
 use omarchy_rust_spotify_proto::{
     ClientMsg, Command, DaemonError, PlayerState, Repeat, ServerMsg, Status, mono_ns, socket_path,
 };
@@ -496,6 +499,7 @@ fn main() -> Result<()> {
     match args.first().map(String::as_str) {
         Some("status") | None => status(),
         Some("watch") => watch(),
+        Some("tui") => tui::run(),
         Some("login") => login(),
         Some("logout") => logout(),
         Some("cmd") => cmd(&args[1..]),

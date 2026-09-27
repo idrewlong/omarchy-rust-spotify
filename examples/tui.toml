@@ -1,0 +1,18 @@
+# ~/.config/omarchy-rust-spotify/tui.toml
+# Everything is optional. Colors you leave out follow the active Omarchy
+# theme (and change with it). Edits apply as soon as you save.
+
+[colors]
+# accent = "#e06c75"      # title, artist, progress fill
+# foreground = "#d4d5d9"
+# background = "#0a0f1c"
+# muted = "#51545e"       # album, times, help, empty progress
+
+[layout]
+# align = "center"        # center | left
+# frame = "rounded"       # rounded | plain | double | thick | none
+# progress = "line"       # line ━━━─── | block ███░░░ | dots ▰▰▰▱▱▱
+# show-album = true
+# show-status = true
+# show-help = true
+# title = " omarchy-rust-spotify "

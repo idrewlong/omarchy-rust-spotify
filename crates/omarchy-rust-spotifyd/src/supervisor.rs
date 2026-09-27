@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use librespot_connect::{ConnectConfig, Spirc};
 use librespot_core::{Session, SessionConfig, cache::Cache, config::DeviceType, error::ErrorKind};
 use librespot_playback::{mixer::Mixer, player::Player};
-use omarchy_rust_spotify_proto::DaemonError;
+use omarchy_rust_spotify_proto::{DaemonError, PlayerState, Status};
 use tokio::sync::{Notify, mpsc, watch};
 
 use crate::config::Config;
@@ -35,6 +35,58 @@ pub struct Supervisor {
     /// Fired when new credentials are saved (login), to retry immediately.
     pub credentials_changed: Arc<Notify>,
     pub config: watch::Receiver<Config>,
+    pub state: watch::Receiver<(u64, PlayerState)>,
+}
+
+/// Written at shutdown when this device was playing, so a restart (an
+/// update, a crash recovered by systemd) resumes instead of going silent.
+pub fn resume_marker() -> std::path::PathBuf {
+    omarchy_rust_spotify_proto::socket_path().with_file_name("resume")
+}
+
+/// Record that we were playing, if we were.
+pub fn mark_resume(state: &PlayerState) {
+    if state.active && state.status == Status::Playing {
+        let _ = std::fs::write(
+            resume_marker(),
+            omarchy_rust_spotify_proto::unix_ms().to_string(),
+        );
+    }
+}
+
+/// Take back the playback we had before a restart: a Connect transfer to
+/// ourselves brings the track and position (paused), then play it.
+async fn resume(spirc: Arc<Spirc>, mut state: watch::Receiver<(u64, PlayerState)>) {
+    let marker = resume_marker();
+    let fresh = std::fs::read_to_string(&marker)
+        .ok()
+        .and_then(|t| t.trim().parse::<u64>().ok())
+        .is_some_and(|at| omarchy_rust_spotify_proto::unix_ms().saturating_sub(at) < 60_000);
+    let _ = std::fs::remove_file(&marker);
+    if !fresh {
+        return;
+    }
+    tracing::info!("resuming playback from before the restart");
+    if spirc.transfer(None).is_err() {
+        return;
+    }
+    let ready = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            {
+                let s = &state.borrow().1;
+                if s.active && s.track.is_some() && s.status != Status::Loading {
+                    return;
+                }
+            }
+            if state.changed().await.is_err() {
+                return;
+            }
+        }
+    })
+    .await;
+    if ready.is_ok() && state.borrow().1.status != Status::Playing {
+        let _ = spirc.play();
+    }
 }
 
 fn classify(err: &librespot_core::Error) -> DaemonError {
@@ -98,6 +150,7 @@ impl Supervisor {
                     let spirc = Arc::new(spirc);
                     let _ = self.spirc.send(Some(spirc.clone()));
                     let _ = self.inputs.send(Input::Connected(true));
+                    tokio::spawn(resume(spirc.clone(), self.state.clone()));
                     tracing::info!("Connect device \"{device_name}\" is up");
 
                     // A new device name needs a new Connect registration:

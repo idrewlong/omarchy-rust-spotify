@@ -346,6 +346,7 @@ async fn run() -> Result<()> {
             session: session_tx,
             credentials_changed,
             config: config_rx.clone(),
+            state: snapshot_rx.clone(),
         }
         .run(),
     );
@@ -360,6 +361,7 @@ async fn run() -> Result<()> {
         _ = sigterm.recv() => {}
     }
     tracing::info!("shutting down");
+    supervisor::mark_resume(&snapshot_rx.borrow().1);
     supervisor::notify_systemd("STOPPING=1");
     if let Some(spirc) = spirc_rx.borrow().as_ref() {
         let _ = spirc.shutdown();

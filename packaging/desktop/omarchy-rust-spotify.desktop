@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Spotify (Rust)
+GenericName=Music Player
+Comment=Fast, skinnable Spotify player for Omarchy
+Exec=omarchy-launch-or-focus-tui --app-id=org.omarchy.rust-spotify /usr/bin/omarchy-rust-spotify tui
+Icon=multimedia-audio-player
+Terminal=false
+Categories=AudioVideo;Audio;Player;
+Keywords=spotify;music;player;
+StartupWMClass=org.omarchy.rust-spotify
