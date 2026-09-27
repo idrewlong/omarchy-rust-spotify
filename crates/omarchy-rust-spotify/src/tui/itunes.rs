@@ -20,7 +20,6 @@ const LCD_BG: u32 = 0xdee3cc;
 const LCD_TEXT: u32 = 0x1f2a1f;
 const LCD_DIM: u32 = 0x5c6650;
 const BTN_FACE: u32 = 0xe8e8e8;
-const BTN_RING: u32 = 0x8c8c8c;
 const LIST_BG: u32 = 0xffffff;
 const STRIPE: u32 = 0xedf3fe;
 const LIST_TEXT: u32 = 0x000000;
@@ -75,17 +74,19 @@ fn round_button(
         glyph,
         " ".repeat(w as usize - 2 - pad - gw)
     );
-    // The ring sits on the metal; only the face is filled.
-    put(buf, x, y, "╭", BTN_RING);
-    put(buf, x + w - 1, y, "╮", BTN_RING);
-    put(buf, x, y + 2, "╰", BTN_RING);
-    put(buf, x + w - 1, y + 2, "╯", BTN_RING);
+    // One solid rounded shape: quadrant blocks round the corners, half
+    // blocks fill the top and bottom rows and the sides, so the face meets
+    // the metal at mid-cell all the way round.
+    put(buf, x, y, "▗", BTN_FACE);
+    put(buf, x + w - 1, y, "▖", BTN_FACE);
+    put(buf, x, y + 2, "▝", BTN_FACE);
+    put(buf, x + w - 1, y + 2, "▘", BTN_FACE);
     for i in 1..w - 1 {
-        put(buf, x + i, y, "─", BTN_RING);
-        put(buf, x + i, y + 2, "─", BTN_RING);
+        put(buf, x + i, y, "▄", BTN_FACE);
+        put(buf, x + i, y + 2, "▀", BTN_FACE);
     }
-    put(buf, x, y + 1, "│", BTN_RING);
-    put(buf, x + w - 1, y + 1, "│", BTN_RING);
+    put(buf, x, y + 1, "▐", BTN_FACE);
+    put(buf, x + w - 1, y + 1, "▌", BTN_FACE);
     text(
         buf,
         x + 1,

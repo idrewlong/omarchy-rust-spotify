@@ -430,16 +430,17 @@ impl Gpu {
             return None;
         }
         let Output::Offscreen {
-            readback, size, row, ..
+            readback,
+            size,
+            row,
+            ..
         } = &self.output
         else {
             return None;
         };
         let slice = readback.slice(..);
         slice.map_async(wgpu::MapMode::Read, |_| {});
-        self.device
-            .poll(wgpu::PollType::wait_indefinitely())
-            .ok()?;
+        self.device.poll(wgpu::PollType::wait_indefinitely()).ok()?;
         let data = slice.get_mapped_range().ok()?;
         let mut px = Vec::with_capacity((size.0 * size.1 * 4) as usize);
         for y in 0..size.1 as usize {

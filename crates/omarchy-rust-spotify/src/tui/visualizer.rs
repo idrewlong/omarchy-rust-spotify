@@ -282,7 +282,9 @@ impl Viz {
 
     /// The showing GPU preset's name.
     pub(super) fn gpu_name(&self) -> Option<&str> {
-        self.gpu.and_then(|i| self.gpu_names.get(i)).map(String::as_str)
+        self.gpu
+            .and_then(|i| self.gpu_names.get(i))
+            .map(String::as_str)
     }
 
     /// Stops in the rotation: the terminal styles, then the GPU presets.
@@ -293,7 +295,10 @@ impl Viz {
     pub(super) fn stop(&self) -> usize {
         match self.gpu {
             Some(i) => Style_::ALL.len() + i,
-            None => Style_::ALL.iter().position(|&s| s == self.style).unwrap_or(0),
+            None => Style_::ALL
+                .iter()
+                .position(|&s| s == self.style)
+                .unwrap_or(0),
         }
     }
 

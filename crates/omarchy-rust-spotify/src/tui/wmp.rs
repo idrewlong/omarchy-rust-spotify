@@ -118,7 +118,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     for (i, ch) in caption
         .chars()
         .enumerate()
-        .take(tb.width.saturating_sub(10) as usize)
+        .take(tb.width.saturating_sub(11) as usize)
     {
         let x = tb.x + i as u16;
         let bg = lerp(TITLE_FROM, TITLE_TO, i as f64 / tb.width as f64);
@@ -128,22 +128,27 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
             .set_bg(bg)
             .set_style(Modifier::BOLD);
     }
+    // Grey buttons, three cells each with the glyph in the middle one,
+    // side by side at the bar's end, parted by their shadow edges. (Gaps
+    // of title bar between them read as stray slivers in a single row.)
     for (i, glyph) in ["_", "□", "×"].iter().enumerate() {
-        let x = tb.right() - 8 + i as u16 * 3;
+        let x = tb.right() - 9 + i as u16 * 3;
         let cell = Rect {
             x,
             y: tb.y,
-            width: 2,
+            width: 3,
             height: 1,
         };
         for cx in cell.left()..cell.right() {
             buf[(cx, tb.y)].set_symbol(" ").set_bg(FACE);
         }
+        // Its shadow edge, which also keeps neighbours apart.
+        buf[(cell.right() - 1, tb.y)].set_symbol("▕").set_fg(DARK);
         text(
             buf,
-            x,
+            x + 1,
             tb.y,
-            2,
+            1,
             glyph,
             Style::new().fg(TEXT).bg(FACE).add_modifier(Modifier::BOLD),
         );
@@ -171,12 +176,19 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     };
     fill(buf, nav, NAV_BG);
     bevel(buf, nav, false, NAV_BG);
+    // Library and Search take you to the library skin (Search with the
+    // search field open).
     let items = [
-        ("Now Playing", true, true),
-        ("Library", false, false),
-        ("Search", false, false),
+        ("Now Playing", true, true, None),
+        (
+            "Library",
+            false,
+            true,
+            Some(Hit::Skin(Skin::Library, false)),
+        ),
+        ("Search", false, true, Some(Hit::Skin(Skin::Library, true))),
     ];
-    for (i, (label, selected, enabled)) in items.iter().enumerate() {
+    for (i, (label, selected, enabled, hit)) in items.into_iter().enumerate() {
         let y = nav.y + 2 + i as u16 * 2;
         if y + 1 >= nav.bottom() {
             break;
@@ -187,7 +199,10 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
             width: nav.width - 2,
             height: 1,
         };
-        if *selected {
+        if let Some(hit) = hit {
+            clicks.push((row, hit));
+        }
+        if selected {
             fill(buf, row, NAV_SEL);
             text(
                 buf,
@@ -200,7 +215,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
                     .bg(NAV_SEL)
                     .add_modifier(Modifier::BOLD),
             );
-        } else if *enabled {
+        } else if enabled {
             text(
                 buf,
                 row.x + 1,

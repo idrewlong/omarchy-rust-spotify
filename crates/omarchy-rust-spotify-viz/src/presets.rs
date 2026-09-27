@@ -116,7 +116,10 @@ mod tests {
     /// included.
     #[test]
     fn builtins_are_valid_wgsl() {
-        let example = ("ring (example)", include_str!("../../../examples/viz/ring.wgsl"));
+        let example = (
+            "ring (example)",
+            include_str!("../../../examples/viz/ring.wgsl"),
+        );
         for (name, src) in BUILTIN.into_iter().chain([example]) {
             let preset = Preset {
                 name: name.into(),

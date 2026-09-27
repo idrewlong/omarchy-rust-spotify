@@ -61,15 +61,15 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
             width: w,
             height: 2,
         };
-        fill(buf, r, bg, fg);
-        text(
-            buf,
-            tx + 2,
-            area.y + 1,
-            w - 2,
-            label,
-            Style::new().fg(fg).bg(bg).add_modifier(Modifier::BOLD),
-        );
+        // Only the active tab is a filled shape; the others are text on the
+        // gloss, as in WMP11 (a flat fill there stood out as a dark notch).
+        let st = Style::new().fg(fg).add_modifier(Modifier::BOLD);
+        if active {
+            fill(buf, r, bg, fg);
+            text(buf, tx + 2, area.y + 1, w - 2, label, st.bg(bg));
+        } else {
+            text(buf, tx + 2, area.y + 1, w - 2, label, st);
+        }
         if active {
             // The Aero glow under the active tab.
             for x in r.left()..r.right() {

@@ -54,7 +54,12 @@ pub(super) struct Stream {
 impl Stream {
     pub(super) fn start(preset: &str, size: (u32, u32)) -> Option<Stream> {
         let mut child = Command::new(exe())
-            .args(["--sixel", &format!("{}x{}", size.0, size.1), "--preset", preset])
+            .args([
+                "--sixel",
+                &format!("{}x{}", size.0, size.1),
+                "--preset",
+                preset,
+            ])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::null())
@@ -106,7 +111,11 @@ impl Drop for Stream {
     }
 }
 
-fn read_frames(stdout: std::process::ChildStdout, latest: Latest, error: Arc<Mutex<Option<String>>>) {
+fn read_frames(
+    stdout: std::process::ChildStdout,
+    latest: Latest,
+    error: Arc<Mutex<Option<String>>>,
+) {
     let mut r = BufReader::with_capacity(1 << 20, stdout);
     let mut header = String::new();
     loop {

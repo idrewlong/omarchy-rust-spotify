@@ -256,6 +256,12 @@ impl Browser {
         ));
     }
 
+    /// Opens the search field, as `/` does.
+    pub(super) fn start_search(&mut self) {
+        self.searching = true;
+        self.query.clear();
+    }
+
     fn sidebar_len(&self) -> usize {
         SIDEBAR_FIXED + self.playlists.len()
     }
@@ -703,7 +709,7 @@ pub(super) fn draw_sidebar(f: &mut Frame, b: &mut Browser, rect: Rect, st: &List
             height: 1,
         };
         let (label, heading) = match i {
-            0 => ("  Search  /".to_string(), false),
+            0 => ("⌕ Search".to_string(), false),
             1 => ("♥ Liked Songs".to_string(), false),
             2 => {
                 let t = match (&b.sidebar_error, b.playlists.is_empty()) {
@@ -720,7 +726,13 @@ pub(super) fn draw_sidebar(f: &mut Frame, b: &mut Browser, rect: Rect, st: &List
         } else {
             row_style(st, i == b.sidebar_sel, focused, false, false)
         };
-        let text = format!(" {}", pad(&label, (rect.width as usize).saturating_sub(1)));
+        let w = (rect.width as usize).saturating_sub(1);
+        // Search lines up with the rows below; its key sits at the far edge.
+        let text = if i == 0 && w > 12 {
+            format!(" {}/ ", pad(&label, w - 2))
+        } else {
+            format!(" {}", pad(&label, w))
+        };
         f.render_widget(Paragraph::new(Line::styled(text, style)), r);
         b.sidebar_rows.push((r, i));
     }

@@ -83,14 +83,14 @@ impl Skin {
 
     const ORDER: [Skin; 9] = [
         Skin::Library,
+        Skin::Classic,
+        Skin::Wmp2000,
         Skin::Winamp,
         Skin::Itunes,
         Skin::Ipod,
         Skin::Zune,
         Skin::Wmp11,
         Skin::Visualizer,
-        Skin::Classic,
-        Skin::Wmp2000,
     ];
 
     fn step(self, by: isize) -> Self {
@@ -399,11 +399,14 @@ enum Hit {
     Volume,
     /// Close the player.
     Quit,
+    /// Switch to a skin; `true` also opens its search.
+    Skin(Skin, bool),
 }
 
 enum Clicked {
     Cmd(Command),
     Quit,
+    Skin(Skin, bool),
 }
 
 impl App {
@@ -427,6 +430,7 @@ impl App {
                 pct: (frac.min(1.0) * 100.0).round() as u8,
             }),
             Hit::Quit => Clicked::Quit,
+            Hit::Skin(skin, search) => Clicked::Skin(*skin, *search),
         })
     }
 }
@@ -574,8 +578,8 @@ pub fn debug_term() -> Result<()> {
 fn cycle_skin(app: &mut App, by: isize) {
     let stop = app.viz.stop() as isize;
     let last = app.viz.stops() as isize - 1;
-    let inside = app.settings.layout.skin == Skin::Visualizer
-        && if by > 0 { stop < last } else { stop > 0 };
+    let inside =
+        app.settings.layout.skin == Skin::Visualizer && if by > 0 { stop < last } else { stop > 0 };
     if inside {
         app.viz.set_stop((stop + by) as usize);
     } else {
@@ -622,10 +626,7 @@ fn show_gpu_frame(app: &mut App, stream: &mut Option<gpu::Stream>) {
         (f.width as u32, f.height as u32)
     });
     // Whole Sixel bands (6 px), so the image never reaches the row below.
-    let size = (
-        field.width as u32 * cw,
-        field.height as u32 * ch / 6 * 6,
-    );
+    let size = (field.width as u32 * cw, field.height as u32 * ch / 6 * 6);
     if size.0 == 0 || size.1 == 0 {
         return;
     }
@@ -955,6 +956,13 @@ fn event_loop(
                     match app.clicked(m.column, m.row) {
                         Some(Clicked::Cmd(cmd)) => send(&mut writer, cmd),
                         Some(Clicked::Quit) => return Ok(false),
+                        Some(Clicked::Skin(skin, search)) => {
+                            app.settings.layout.skin = skin;
+                            if search {
+                                app.browser.start_search();
+                            }
+                            app.needs_clear = true;
+                        }
                         None => {}
                     }
                 }
@@ -1125,7 +1133,7 @@ pub(super) mod tests {
         }
         assert_eq!(seen, Style_::ALL.to_vec());
         cycle_skin(&mut app, 1);
-        assert_eq!(app.settings.layout.skin, Skin::Classic);
+        assert_eq!(app.settings.layout.skin, Skin::Library);
         cycle_skin(&mut app, -1);
         assert_eq!(
             (app.settings.layout.skin, app.viz.style),

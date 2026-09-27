@@ -507,8 +507,10 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     label(buf, wcx, wcy - ry * 0.72, "MENU");
     // Mirror image positions, so both sit the same distance from the centre.
     let side = (rx * 0.72).round();
-    label(buf, wcx - side + 0.5, wcy, "⏮");
-    label(buf, wcx + side - 0.5, wcy, "⏭");
+    // Two cells wide like MENU's four, so they centre exactly (and read at
+    // the size of the other labels, which ⏮ ⏭ don't in most fonts).
+    label(buf, wcx - side, wcy, "◀◀");
+    label(buf, wcx + side, wcy, "▶▶");
     label(buf, wcx, wcy + ry * 0.66, "▶⏸");
     app.ipod.wheel = Wheel {
         cx: wcx,

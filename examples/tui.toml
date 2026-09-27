@@ -12,14 +12,14 @@
 # playlist-order = "recent" # recent (like Spotify's Recents) | library | name
 # skin = "library"        # press t to cycle:
 #   library   find and play music (default), in your Omarchy theme
+#   classic   big now-playing, in your Omarchy theme
+#   wmp2000   Windows 2000 era Media Player
 #   winamp    Winamp 2.x base skin: green LCD, playlist editor
 #   itunes    iTunes 4, 2003 brushed metal, striped song list
 #   ipod      2004 iPod with a clickable click wheel and menus
 #   zune      Zune software 2006: black, lowercase, magenta/orange
 #   wmp11     Windows Media Player 11 (Vista): glossy black Aero
 #   visualizer  full-screen visualizations of the real audio (v: next style)
-#   classic   big now-playing, in your Omarchy theme
-#   wmp2000   Windows 2000 era Media Player
 # viz = "bars"            # the visualizer's style, after WMP's visualizations:
 #   bars            spectrum bars with falling peak caps
 #   mirror          spectrum mirrored about the middle

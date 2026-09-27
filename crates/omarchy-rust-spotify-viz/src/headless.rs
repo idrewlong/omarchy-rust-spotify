@@ -121,12 +121,7 @@ pub fn run(mut presets: Vec<Preset>, mut current: usize, w: u32, h: u32) -> Resu
         } else {
             idle_sent = false;
         }
-        let u = audio.uniforms(
-            gpu.scene_size(),
-            start.elapsed().as_secs_f32(),
-            dt,
-            frame,
-        );
+        let u = audio.uniforms(gpu.scene_size(), start.elapsed().as_secs_f32(), dt, frame);
         frame = frame.wrapping_add(1);
         let Some(px) = gpu.render(&u, 0.3 + 0.7 * audio.alive) else {
             continue;
