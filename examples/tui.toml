@@ -9,9 +9,9 @@
 # muted = "#51545e"       # album, times, help, empty progress
 
 [layout]
-# skin = "classic"        # classic | compact | wmp2000   (press t to cycle)
+# skin = "library"        # library | classic | wmp2000   (press t to cycle)
 #                         # wmp2000 keeps its Windows 2000 palette; [colors]
-#                         # apply to classic and compact
+#                         # apply to library and classic
 # cover = "left"          # left | top | none  (left falls back to top when narrow)
 # cover-size = 0          # rows; 0 = as big as fits
 # align = "center"        # center | left

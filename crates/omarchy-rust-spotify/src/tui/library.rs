@@ -505,6 +505,20 @@ impl Browser {
     }
 }
 
+/// The longest key help that fits: never cut off mid-word.
+fn help_for(width: u16) -> &'static str {
+    const TIERS: [&str; 3] = [
+        "/ search · tab panes · ↑↓ move · enter play/open · esc back · space pause · n/p next/prev · s shuffle · r repeat · +/- volume · t skin · q quit",
+        "/ search · tab panes · enter play/open · esc back · space pause · n/p · s/r · +/- · t skin · q quit",
+        "/ search · enter play · esc back · space pause · q quit",
+    ];
+    TIERS
+        .iter()
+        .copied()
+        .find(|t| t.chars().count() <= width as usize)
+        .unwrap_or("q quit")
+}
+
 fn first_item(v: &View) -> usize {
     rows(&v.sections)
         .iter()
@@ -858,10 +872,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
 
     let help_text = match &app.settings.problem {
         Some(problem) => Line::styled(problem.clone(), Style::new().fg(p.accent)),
-        None => Line::styled(
-            "/ search · tab/h/l panes · ↑↓ move · enter open/play · esc back · space play/pause · n/p · s r · +/- · t skin · q quit",
-            Style::new().fg(p.muted),
-        ),
+        None => Line::styled(help_for(help.width), Style::new().fg(p.muted)),
     };
     f.render_widget(Paragraph::new(help_text).alignment(Alignment::Center), help);
 
@@ -929,5 +940,224 @@ impl Browser {
             id: 1,
         });
         b
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn track(uri: &str) -> Item {
+        Item {
+            kind: ItemKind::Track,
+            uri: uri.into(),
+            name: uri.into(),
+            subtitle: String::new(),
+            duration_ms: Some(1000),
+            image: None,
+        }
+    }
+
+    fn reqs(out: &[Out]) -> Vec<(u64, Request)> {
+        out.iter()
+            .filter_map(|o| {
+                if let Out::Req(id, r) = o {
+                    Some((*id, r.clone()))
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn cmds(out: &[Out]) -> Vec<Command> {
+        out.iter()
+            .filter_map(|o| {
+                if let Out::Cmd(c) = o {
+                    Some(c.clone())
+                } else {
+                    None
+                }
+            })
+            .collect()
+    }
+
+    fn key(b: &mut Browser, code: KeyCode) -> Vec<Out> {
+        let mut out = Vec::new();
+        b.on_key(code, KeyModifiers::NONE, &mut out);
+        out
+    }
+
+    fn answer(b: &mut Browser, id: u64, sections: Vec<Section>) {
+        assert!(b.on_response(&ServerMsg::Res { id, sections }));
+    }
+
+    #[test]
+    fn start_loads_playlists_and_opens_liked() {
+        let mut b = Browser::default();
+        let mut out = Vec::new();
+        b.start(&mut out);
+        let r = reqs(&out);
+        assert!(matches!(r[0].1, Request::Playlists));
+        assert_eq!(
+            r[1].1,
+            Request::Tracks {
+                of: "liked".into(),
+                offset: 0
+            }
+        );
+        // Starting twice does nothing.
+        let mut again = Vec::new();
+        b.start(&mut again);
+        assert!(again.is_empty());
+    }
+
+    #[test]
+    fn enter_plays_a_liked_track_in_liked() {
+        let mut b = Browser::default();
+        let mut out = Vec::new();
+        b.start(&mut out);
+        let view_id = reqs(&out)[1].0;
+        answer(
+            &mut b,
+            view_id,
+            vec![Section {
+                title: "Liked Songs".into(),
+                items: vec![track("a"), track("b")],
+                total: 2,
+                offset: 0,
+            }],
+        );
+        b.focus = Focus::List;
+        key(&mut b, KeyCode::Down);
+        let out = key(&mut b, KeyCode::Enter);
+        assert_eq!(
+            cmds(&out),
+            vec![Command::PlayIn {
+                context: "liked".into(),
+                track: Some("b".into())
+            }]
+        );
+    }
+
+    #[test]
+    fn search_then_open_album_then_back() {
+        let mut b = Browser::default();
+        key(&mut b, KeyCode::Char('/'));
+        for c in "wil".chars() {
+            key(&mut b, KeyCode::Char(c));
+        }
+        let out = key(&mut b, KeyCode::Enter);
+        let (id, req) = reqs(&out).remove(0);
+        assert_eq!(req, Request::Search { q: "wil".into() });
+        let album = Item {
+            kind: ItemKind::Album,
+            uri: "spotify:album:x".into(),
+            name: "X".into(),
+            subtitle: String::new(),
+            duration_ms: None,
+            image: None,
+        };
+        answer(
+            &mut b,
+            id,
+            vec![
+                Section {
+                    title: "Songs".into(),
+                    items: vec![track("t1")],
+                    total: 1,
+                    offset: 0,
+                },
+                Section {
+                    title: "Albums".into(),
+                    items: vec![album],
+                    total: 1,
+                    offset: 0,
+                },
+            ],
+        );
+        // Starts on the first item (not the "Songs" header); a search
+        // result plays on its own.
+        let out = key(&mut b, KeyCode::Enter);
+        assert_eq!(
+            cmds(&out),
+            vec![Command::PlayIn {
+                context: "t1".into(),
+                track: None
+            }]
+        );
+        // Down skips the "Albums" header onto the album; Enter opens it.
+        key(&mut b, KeyCode::Down);
+        let out = key(&mut b, KeyCode::Enter);
+        assert_eq!(
+            reqs(&out)[0].1,
+            Request::Tracks {
+                of: "spotify:album:x".into(),
+                offset: 0
+            }
+        );
+        // Esc returns to the search results.
+        key(&mut b, KeyCode::Esc);
+        assert!(matches!(
+            b.view.as_ref().unwrap().req,
+            Request::Search { .. }
+        ));
+    }
+
+    #[test]
+    fn stale_responses_are_dropped() {
+        let mut b = Browser::default();
+        let mut out = Vec::new();
+        b.start(&mut out);
+        let liked_id = reqs(&out)[1].0;
+        // The user opens a search before Liked Songs arrives.
+        key(&mut b, KeyCode::Char('/'));
+        key(&mut b, KeyCode::Char('x'));
+        key(&mut b, KeyCode::Enter);
+        answer(
+            &mut b,
+            liked_id,
+            vec![Section {
+                title: "Liked Songs".into(),
+                items: vec![track("a")],
+                total: 1,
+                offset: 0,
+            }],
+        );
+        let v = b.view.as_ref().unwrap();
+        assert!(matches!(v.req, Request::Search { .. }));
+        assert!(
+            v.sections.is_empty(),
+            "the late Liked Songs answer must not land in the search view"
+        );
+    }
+
+    #[test]
+    fn scrolling_near_the_end_loads_the_next_page() {
+        let mut b = Browser::default();
+        let mut out = Vec::new();
+        b.start(&mut out);
+        let id = reqs(&out)[1].0;
+        let items = (0..50).map(|i| track(&format!("t{i}"))).collect();
+        answer(
+            &mut b,
+            id,
+            vec![Section {
+                title: "Liked Songs".into(),
+                items,
+                total: 120,
+                offset: 0,
+            }],
+        );
+        b.focus = Focus::List;
+        let mut out = Vec::new();
+        b.move_list(40, &mut out);
+        assert_eq!(
+            reqs(&out).last().unwrap().1,
+            Request::Tracks {
+                of: "liked".into(),
+                offset: 50
+            }
+        );
     }
 }

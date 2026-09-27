@@ -2318,6 +2318,7 @@ version = "0.0.1"
 dependencies = [
  "anyhow",
  "image",
+ "libc",
  "omarchy-rust-spotify-proto",
  "ratatui",
  "ratatui-image",

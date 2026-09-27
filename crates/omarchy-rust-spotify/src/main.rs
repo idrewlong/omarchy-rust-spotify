@@ -604,6 +604,7 @@ fn main() -> Result<()> {
         Some("debug") if args.get(1).map(String::as_str) == Some("latency") => {
             latency(args.get(2).map(|n| n.parse()).transpose()?.unwrap_or(20))
         }
+        Some("debug") if args.get(1).map(String::as_str) == Some("term") => tui::debug_term(),
         Some("debug") if args.get(1).map(String::as_str) == Some("api") => {
             let path = args.get(2).context("usage: debug api <path>")?.clone();
             if let ServerMsg::Json { value, .. } =

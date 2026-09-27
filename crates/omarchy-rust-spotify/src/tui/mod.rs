@@ -33,7 +33,6 @@ use ratatui_image::{
 use serde::Deserialize;
 
 mod classic;
-mod compact;
 mod library;
 mod wmp;
 
@@ -48,7 +47,6 @@ enum Skin {
     #[default]
     Library,
     Classic,
-    Compact,
     Wmp2000,
 }
 
@@ -56,8 +54,7 @@ impl Skin {
     fn next(self) -> Self {
         match self {
             Skin::Library => Skin::Classic,
-            Skin::Classic => Skin::Compact,
-            Skin::Compact => Skin::Wmp2000,
+            Skin::Classic => Skin::Wmp2000,
             Skin::Wmp2000 => Skin::Library,
         }
     }
@@ -330,8 +327,12 @@ struct App {
     /// half-blocks) and cell size.
     picker: Picker,
     /// The current cover, ready to render, and which file it came from.
-    cover: Option<StatefulProtocol>,
+    cover: Option<Cover>,
     cover_path: Option<String>,
+    /// Graphics can outlive the cells that drew them (image cells are
+    /// "skip" to the diff): wipe the screen on the next frame after the
+    /// cover, the skin or the window size changes.
+    needs_clear: bool,
     /// Clickable areas from the last frame, filled in by the skin.
     hits: Vec<(Rect, Hit)>,
     browser: library::Browser,
@@ -381,6 +382,12 @@ impl App {
 /// Decode the track's cached cover when it changes. Covers are local files
 /// (the daemon caches, and prefetches, them), so this never touches the
 /// network.
+/// The decoded cover, and a render-ready copy sized for one area.
+struct Cover {
+    image: image::DynamicImage,
+    sized: Option<((u16, u16), StatefulProtocol)>,
+}
+
 fn refresh_cover(app: &mut App) {
     let path = app.state.track.as_ref().and_then(|t| t.cover_path.clone());
     if path == app.cover_path {
@@ -396,8 +403,9 @@ fn refresh_cover(app: &mut App) {
                 .decode()
                 .ok()
         })
-        .map(|img| app.picker.new_resize_protocol(img));
+        .map(|image| Cover { image, sized: None });
     app.cover_path = path;
+    app.needs_clear = true;
 }
 
 /// The problem to show above everything else, if any: it explains why
@@ -418,13 +426,32 @@ fn banner(app: &App) -> Option<String> {
     }
 }
 
-/// Render the cover (if any) into `rect`.
+/// Render the cover (if any) as a square in `rect`.
+///
+/// Scaled here to exact pixels rather than by ratatui-image: its fit uses the
+/// area's full pixel height, and Sixel pads images to 6-pixel bands, so a
+/// 4-row (104 px) cover came out 108 px tall and bled into the row below,
+/// where redraws then erased a strip of it. Height is rounded down to a
+/// multiple of 6 so the image always stays inside its cells.
 fn render_cover(f: &mut Frame, app: &mut App, rect: Rect) {
-    if let Some(cover) = app.cover.as_mut() {
+    let font = app.picker.font_size();
+    let (fw, fh) = (font.width.max(1) as u32, font.height.max(1) as u32);
+    let Some(cover) = app.cover.as_mut() else {
+        return;
+    };
+    let key = (rect.width, rect.height);
+    if cover.sized.as_ref().map(|(k, _)| *k) != Some(key) {
+        let max_w = rect.width as u32 * fw;
+        let max_h = rect.height as u32 * fh / 6 * 6;
+        let side = max_w.min(max_h).max(1);
+        let img = cover.image.resize_exact(side, side, FilterType::Triangle);
+        cover.sized = Some((key, app.picker.new_resize_protocol(img)));
+    }
+    if let Some((_, proto)) = cover.sized.as_mut() {
         f.render_stateful_widget(
-            StatefulImage::default().resize(Resize::Fit(Some(FilterType::Triangle))),
+            StatefulImage::default().resize(Resize::Fit(None)),
             rect,
-            cover,
+            proto,
         );
     }
 }
@@ -434,12 +461,38 @@ fn draw(f: &mut Frame, app: &mut App) {
     match app.settings.layout.skin {
         Skin::Library => library::draw(f, app),
         Skin::Classic => classic::draw(f, app),
-        Skin::Compact => compact::draw(f, app),
         Skin::Wmp2000 => wmp::draw(f, app),
     }
 }
 
 // -------------------------------------------------------------------- loop
+
+/// Print what the image picker detected next to what the kernel says the
+/// window is, to diagnose cover-art sizing.
+pub fn debug_term() -> Result<()> {
+    let picker = Picker::from_query_stdio();
+    let mut ws: libc::winsize = unsafe { std::mem::zeroed() };
+    // SAFETY: TIOCGWINSZ fills a winsize.
+    unsafe { libc::ioctl(1, libc::TIOCGWINSZ, &mut ws) };
+    match picker {
+        Ok(p) => println!(
+            "picker: protocol {:?}, font {:?}",
+            p.protocol_type(),
+            p.font_size()
+        ),
+        Err(e) => println!("picker failed: {e}"),
+    }
+    println!(
+        "winsize: {} cols x {} rows, {} x {} px -> cell {:.2} x {:.2} px",
+        ws.ws_col,
+        ws.ws_row,
+        ws.ws_xpixel,
+        ws.ws_ypixel,
+        ws.ws_xpixel as f64 / ws.ws_col.max(1) as f64,
+        ws.ws_ypixel as f64 / ws.ws_row.max(1) as f64
+    );
+    Ok(())
+}
 
 pub fn run() -> Result<()> {
     // Where we were started from, before a new build replaces it (after that
@@ -512,6 +565,7 @@ fn key_command(app: &mut App, code: KeyCode, mods: KeyModifiers) -> Option<Optio
         }),
         KeyCode::Char('t') => {
             app.settings.layout.skin = app.settings.layout.skin.next();
+            app.needs_clear = true;
             None
         }
         KeyCode::Char('L') => {
@@ -520,6 +574,26 @@ fn key_command(app: &mut App, code: KeyCode, mods: KeyModifiers) -> Option<Optio
         }
         _ => None,
     })
+}
+
+/// Wipe the screen, graphics included, and make the next frame redraw every
+/// cell.
+///
+/// Not `Terminal::clear`: it asks the terminal for the cursor position, and
+/// the reply arrives on stdin where the keyboard thread reads it first; the
+/// query then timed out and the player exited ("The cursor position could
+/// not be read"). Instead: a direct clear, then one frame that differs from
+/// the real one in every cell, so the diff rewrites them all.
+fn hard_clear(terminal: &mut DefaultTerminal) -> Result<()> {
+    use ratatui::crossterm::terminal::{Clear, ClearType};
+    ratatui::crossterm::execute!(std::io::stdout(), Clear(ClearType::All))?;
+    terminal.draw(|f| {
+        f.render_widget(
+            Block::new().style(Style::new().bg(Color::Rgb(1, 2, 3))),
+            f.area(),
+        );
+    })?;
+    Ok(())
 }
 
 /// Ok(true) means "re-exec, a new build is installed".
@@ -552,6 +626,7 @@ fn event_loop(
         picker,
         cover: None,
         cover_path: None,
+        needs_clear: false,
         hits: Vec::new(),
         browser: Default::default(),
     };
@@ -566,6 +641,9 @@ fn event_loop(
 
     loop {
         refresh_cover(&mut app);
+        if std::mem::take(&mut app.needs_clear) {
+            hard_clear(terminal)?;
+        }
         terminal.draw(|f| draw(f, &mut app))?;
 
         // While playing, wake 4x a second to move the clock; otherwise once
@@ -612,6 +690,7 @@ fn event_loop(
                         None => {}
                     }
                 }
+                Msg::Input(Event::Resize(..)) => app.needs_clear = true,
                 Msg::Input(_) => {}
                 Msg::Server(ref m @ (ServerMsg::Res { .. } | ServerMsg::Err { .. })) => {
                     app.browser.on_response(m);
@@ -667,6 +746,7 @@ fn event_loop(
         if now != watched {
             watched = now;
             app.settings = load_settings();
+            app.needs_clear = true;
         }
         if !app.connected {
             writer = connect(tx.clone()).ok();
@@ -731,6 +811,7 @@ mod tests {
             picker: Picker::halfblocks(),
             cover: None,
             cover_path: None,
+            needs_clear: false,
             hits: Vec::new(),
             browser: Default::default(),
         }
@@ -740,7 +821,7 @@ mod tests {
     /// terminal up, with and without a track.
     #[test]
     fn skins_render_at_any_size() {
-        for skin in [Skin::Library, Skin::Classic, Skin::Compact, Skin::Wmp2000] {
+        for skin in [Skin::Library, Skin::Classic, Skin::Wmp2000] {
             for playing in [false, true] {
                 for (w, h) in [
                     (1, 1),
