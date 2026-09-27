@@ -28,6 +28,8 @@ pub enum Input {
     LoginUrl(Option<String>),
     LoginError(Option<String>),
     DeviceName(String),
+    /// The system (PipeWire default output) volume, which is the volume.
+    SystemVolume(u8),
 }
 
 /// One published change.
@@ -87,9 +89,9 @@ pub fn reduce(state: &mut PlayerState, event: &PlayerEvent, now_unix_ms: u64) ->
             fx.seeked = true;
         }
         PlayerEvent::PositionChanged { position_ms, .. } => set_position(state, *position_ms),
-        PlayerEvent::VolumeChanged { volume } => {
-            state.volume = ((*volume as u32 * 100 + u16::MAX as u32 / 2) / u16::MAX as u32) as u8;
-        }
+        // The player's own volume is pinned at 100%; `volume` is the
+        // system's (Input::SystemVolume), so librespot's is ignored.
+        PlayerEvent::VolumeChanged { .. } => {}
         PlayerEvent::ShuffleChanged { shuffle } => state.shuffle = *shuffle,
         PlayerEvent::RepeatChanged { context, track } => {
             state.repeat = match (context, track) {
@@ -184,6 +186,7 @@ pub async fn run(
                     Input::LoginUrl(url) => state.login_url = url,
                     Input::LoginError(e) => state.login_error = e,
                     Input::DeviceName(name) => state.device_name = name,
+                    Input::SystemVolume(v) => state.volume = v,
                 }
                 (received, old, Effects::default())
             }
@@ -304,10 +307,12 @@ mod tests {
     }
 
     #[test]
-    fn volume_maps_to_percent() {
-        let mut s = PlayerState::default();
-        reduce(&mut s, &PlayerEvent::VolumeChanged { volume: u16::MAX }, 0);
-        assert_eq!(s.volume, 100);
+    fn player_volume_is_ignored_system_volume_wins() {
+        // librespot's volume is pinned at 100%; only the system's counts.
+        let mut s = PlayerState {
+            volume: 42,
+            ..Default::default()
+        };
         reduce(
             &mut s,
             &PlayerEvent::VolumeChanged {
@@ -315,6 +320,6 @@ mod tests {
             },
             0,
         );
-        assert_eq!(s.volume, 50);
+        assert_eq!(s.volume, 42);
     }
 }

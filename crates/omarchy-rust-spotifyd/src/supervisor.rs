@@ -133,6 +133,10 @@ impl Supervisor {
             let connect_config = ConnectConfig {
                 name: device_name.clone(),
                 device_type: DeviceType::Computer,
+                // Volume is the system's (sysvol.rs): keep librespot's at
+                // 100% and don't offer Spotify apps a second slider.
+                initial_volume: u16::MAX,
+                disable_volume: true,
                 ..Default::default()
             };
             match Spirc::new(

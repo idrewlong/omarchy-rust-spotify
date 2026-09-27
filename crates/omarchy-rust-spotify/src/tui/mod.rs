@@ -34,6 +34,7 @@ use serde::Deserialize;
 
 mod classic;
 mod compact;
+mod library;
 mod wmp;
 
 // ---------------------------------------------------------------- settings
@@ -43,7 +44,9 @@ mod wmp;
 #[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq)]
 #[serde(rename_all = "kebab-case")]
 enum Skin {
+    /// Find and play music: sidebar, lists, now-playing bar.
     #[default]
+    Library,
     Classic,
     Compact,
     Wmp2000,
@@ -52,9 +55,10 @@ enum Skin {
 impl Skin {
     fn next(self) -> Self {
         match self {
+            Skin::Library => Skin::Classic,
             Skin::Classic => Skin::Compact,
             Skin::Compact => Skin::Wmp2000,
-            Skin::Wmp2000 => Skin::Classic,
+            Skin::Wmp2000 => Skin::Library,
         }
     }
 }
@@ -129,7 +133,7 @@ struct LayoutSettings {
 impl Default for LayoutSettings {
     fn default() -> Self {
         Self {
-            skin: Skin::Classic,
+            skin: Skin::Library,
             cover: CoverPlacement::Left,
             cover_size: 0,
             align: Align::Center,
@@ -272,12 +276,24 @@ fn connect(tx: mpsc::Sender<Msg>) -> Result<UnixStream> {
     Ok(writer)
 }
 
+fn send_msg(writer: &mut Option<UnixStream>, msg: &ClientMsg) {
+    if let Some(w) = writer
+        && let Ok(mut line) = serde_json::to_vec(msg)
+    {
+        line.push(b'\n');
+        let _ = w.write_all(&line);
+    }
+}
+
 fn send(writer: &mut Option<UnixStream>, cmd: Command) {
-    if let Some(w) = writer {
-        let msg = ClientMsg::Cmd { id: 0, cmd };
-        if let Ok(mut line) = serde_json::to_vec(&msg) {
-            line.push(b'\n');
-            let _ = w.write_all(&line);
+    send_msg(writer, &ClientMsg::Cmd { id: 0, cmd });
+}
+
+fn send_out(writer: &mut Option<UnixStream>, out: Vec<library::Out>) {
+    for o in out {
+        match o {
+            library::Out::Cmd(cmd) => send(writer, cmd),
+            library::Out::Req(id, req) => send_msg(writer, &ClientMsg::Req { id, req }),
         }
     }
 }
@@ -318,6 +334,7 @@ struct App {
     cover_path: Option<String>,
     /// Clickable areas from the last frame, filled in by the skin.
     hits: Vec<(Rect, Hit)>,
+    browser: library::Browser,
 }
 
 #[derive(Debug, Clone)]
@@ -415,6 +432,7 @@ fn render_cover(f: &mut Frame, app: &mut App, rect: Rect) {
 fn draw(f: &mut Frame, app: &mut App) {
     app.hits.clear();
     match app.settings.layout.skin {
+        Skin::Library => library::draw(f, app),
         Skin::Classic => classic::draw(f, app),
         Skin::Compact => compact::draw(f, app),
         Skin::Wmp2000 => wmp::draw(f, app),
@@ -440,11 +458,24 @@ pub fn run() -> Result<()> {
 
     if let Ok(true) = result {
         // A new build was installed: become it, same arguments, same window.
+        // exec only returns on failure; retry briefly (the file may still be
+        // settling), then say why rather than let the window vanish.
         use std::os::unix::process::CommandExt;
-        let err = std::process::Command::new(&exe)
-            .args(std::env::args_os().skip(1))
-            .exec();
-        return Err(err.into());
+        let mut err = None;
+        for _ in 0..10 {
+            err = Some(
+                std::process::Command::new(&exe)
+                    .args(std::env::args_os().skip(1))
+                    .exec(),
+            );
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        eprintln!(
+            "\nCouldn't switch to the updated player: {}\nPress Enter to close, then reopen it.",
+            err.map(|e| e.to_string()).unwrap_or_default()
+        );
+        let _ = std::io::stdin().read_line(&mut String::new());
+        return Ok(());
     }
     result.map(|_| ())
 }
@@ -522,9 +553,13 @@ fn event_loop(
         cover: None,
         cover_path: None,
         hits: Vec::new(),
+        browser: Default::default(),
     };
     let mut watched = (mtime(&theme_path()), mtime(&tui_path()));
     let mut last_check = std::time::Instant::now();
+    // A new binary seen, and since when unchanged: switch only once it has
+    // been stable for a second (i.e. fully written).
+    let mut update_seen: Option<(Option<(SystemTime, u64)>, std::time::Instant)> = None;
     // Input in the first moments is the terminal answering our queries, not
     // the user.
     let started = std::time::Instant::now();
@@ -546,12 +581,28 @@ fn event_loop(
             match msg {
                 Msg::Input(_) if started.elapsed() < Duration::from_millis(500) => {}
                 Msg::Input(Event::Key(k)) if k.kind == KeyEventKind::Press => {
+                    // The library view gets keys first (navigation, search).
+                    if app.settings.layout.skin == Skin::Library {
+                        let mut out = Vec::new();
+                        let handled = app.browser.on_key(k.code, k.modifiers, &mut out);
+                        send_out(&mut writer, out);
+                        if handled.is_some() {
+                            continue;
+                        }
+                    }
                     match key_command(&mut app, k.code, k.modifiers) {
                         None => return Ok(false),
                         Some(Some(cmd)) => send(&mut writer, cmd),
                         Some(None) => {}
                     }
                 }
+                Msg::Input(Event::Mouse(m))
+                    if app.settings.layout.skin == Skin::Library && {
+                        let mut out = Vec::new();
+                        let used = app.browser.on_mouse(m.kind, m.column, m.row, &mut out);
+                        send_out(&mut writer, out);
+                        used
+                    } => {}
                 Msg::Input(Event::Mouse(m))
                     if matches!(m.kind, MouseEventKind::Down(MouseButton::Left)) =>
                 {
@@ -562,8 +613,19 @@ fn event_loop(
                     }
                 }
                 Msg::Input(_) => {}
+                Msg::Server(ref m @ (ServerMsg::Res { .. } | ServerMsg::Err { .. })) => {
+                    app.browser.on_response(m);
+                }
                 other => apply(&mut app, other),
             }
+        }
+
+        // Library: first requests once connected (also after a reconnect,
+        // since the daemon may have restarted).
+        if app.connected && app.settings.layout.skin == Skin::Library {
+            let mut out = Vec::new();
+            app.browser.start(&mut out);
+            send_out(&mut writer, out);
         }
 
         // Our own sign-in: open its page, then close it shortly after.
@@ -588,9 +650,18 @@ fn event_loop(
             continue;
         }
         last_check = std::time::Instant::now();
-        // A new build installed: re-exec into it.
-        if mtime(exe).is_some() && mtime(exe) != exe_stamp {
-            return Ok(true);
+        // A new build installed: re-exec into it once it's settled.
+        let stamp = mtime(exe);
+        if stamp.is_some() && stamp != exe_stamp {
+            match update_seen {
+                Some((seen, since))
+                    if seen == stamp && since.elapsed() >= Duration::from_secs(1) =>
+                {
+                    return Ok(true);
+                }
+                Some((seen, _)) if seen == stamp => {}
+                _ => update_seen = Some((stamp, std::time::Instant::now())),
+            }
         }
         let now = (mtime(&theme_path()), mtime(&tui_path()));
         if now != watched {
@@ -661,6 +732,7 @@ mod tests {
             cover: None,
             cover_path: None,
             hits: Vec::new(),
+            browser: Default::default(),
         }
     }
 
@@ -668,7 +740,7 @@ mod tests {
     /// terminal up, with and without a track.
     #[test]
     fn skins_render_at_any_size() {
-        for skin in [Skin::Classic, Skin::Compact, Skin::Wmp2000] {
+        for skin in [Skin::Library, Skin::Classic, Skin::Compact, Skin::Wmp2000] {
             for playing in [false, true] {
                 for (w, h) in [
                     (1, 1),
@@ -682,6 +754,9 @@ mod tests {
                     (200, 60),
                 ] {
                     let mut app = app(skin, playing);
+                    if playing {
+                        app.browser = library::Browser::sample();
+                    }
                     let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
                     term.draw(|f| draw(f, &mut app))
                         .unwrap_or_else(|e| panic!("{skin:?} {w}x{h}: {e}"));

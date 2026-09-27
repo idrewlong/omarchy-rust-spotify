@@ -7,7 +7,13 @@ cd "$(dirname "$0")/.."
 cargo build --release
 mkdir -p ~/.local/bin ~/.config/systemd/user \
   ~/.cache/omarchy-rust-spotify ~/.local/share/omarchy-rust-spotify ~/.config/omarchy-rust-spotify
-install -m 755 target/release/omarchy-rust-spotifyd target/release/omarchy-rust-spotify ~/.local/bin/
+# Write each binary beside its destination and rename it into place: the
+# rename is atomic, so an open player that re-execs on update never sees a
+# half-written file.
+for bin in omarchy-rust-spotifyd omarchy-rust-spotify; do
+  install -m 755 "target/release/$bin" ~/.local/bin/".$bin.new"
+  mv -f ~/.local/bin/".$bin.new" ~/.local/bin/"$bin"
+done
 sed "s|^ExecStart=.*|ExecStart=$HOME/.local/bin/omarchy-rust-spotifyd|" \
   packaging/systemd/omarchy-rust-spotifyd.service > ~/.config/systemd/user/omarchy-rust-spotifyd.service
 # App launcher entry, pointed at this install.

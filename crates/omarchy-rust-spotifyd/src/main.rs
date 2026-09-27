@@ -13,6 +13,7 @@ mod secrets;
 mod sink;
 mod state;
 mod supervisor;
+mod sysvol;
 mod webapi;
 
 use std::os::unix::fs::PermissionsExt;
@@ -201,6 +202,11 @@ fn play_in(
 
 async fn execute(ctx: &Ctx, cmd: Command) -> Result<()> {
     match cmd {
+        // The system volume: works even when not connected to Spotify.
+        Command::Volume { pct } => {
+            sysvol::set(pct).await;
+            return Ok(());
+        }
         Command::Logout => {
             ctx.secrets.clear_session();
             if let Some(spirc) = ctx.spirc.borrow().as_ref() {
@@ -252,9 +258,7 @@ async fn execute(ctx: &Ctx, cmd: Command) -> Result<()> {
             spirc.repeat(mode != Repeat::Off)?;
             spirc.repeat_track(mode == Repeat::Track)?;
         }
-        Command::Volume { pct } => {
-            spirc.set_volume((pct.min(100) as u32 * u16::MAX as u32 / 100) as u16)?
-        }
+        Command::Volume { .. } => unreachable!("handled before needing Spotify"),
         Command::PlayIn { context, track } => {
             let username = ctx.session.borrow().username();
             play_in(spirc, &username, active, context, track)?
@@ -439,7 +443,7 @@ async fn run() -> Result<()> {
             secrets,
             player,
             mixer,
-            inputs: inputs_tx,
+            inputs: inputs_tx.clone(),
             spirc: spirc_tx,
             session: session_tx,
             credentials_changed,
@@ -450,6 +454,7 @@ async fn run() -> Result<()> {
     );
 
     tokio::spawn(notify::run(updates_tx.subscribe(), config_rx));
+    tokio::spawn(sysvol::watch(inputs_tx.clone()));
 
     supervisor::notify_systemd("READY=1");
 
