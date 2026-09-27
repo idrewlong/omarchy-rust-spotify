@@ -11,3 +11,5 @@ anyhow.workspace = true
 ratatui = "0.30"
 toml = "1.1.6"
 serde = { workspace = true, features = ["derive"] }
+ratatui-image = { version = "11.1.0", default-features = false, features = ["crossterm"] }
+image = { version = "0.25.10", default-features = false, features = ["jpeg"] }

@@ -24,6 +24,9 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph};
 use ratatui::{DefaultTerminal, Frame};
+use ratatui_image::{
+    FilterType, Resize, StatefulImage, picker::Picker, protocol::StatefulProtocol,
+};
 use serde::Deserialize;
 
 // ---------------------------------------------------------------- settings
@@ -68,9 +71,22 @@ enum Frame_ {
     None,
 }
 
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq)]
+#[serde(rename_all = "kebab-case")]
+enum CoverPlacement {
+    /// Beside the track info (falls back to top when the window is narrow).
+    #[default]
+    Left,
+    Top,
+    None,
+}
+
 #[derive(Debug, Clone, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields, rename_all = "kebab-case")]
 struct LayoutSettings {
+    cover: CoverPlacement,
+    /// Cover height in rows; 0 = as big as fits.
+    cover_size: u16,
     align: Align,
     frame: Frame_,
     progress: ProgressStyle,
@@ -84,6 +100,8 @@ struct LayoutSettings {
 impl Default for LayoutSettings {
     fn default() -> Self {
         Self {
+            cover: CoverPlacement::Left,
+            cover_size: 0,
             align: Align::Center,
             frame: Frame_::Rounded,
             progress: ProgressStyle::Line,
@@ -262,9 +280,99 @@ struct App {
     login_requested: bool,
     /// The sign-in window we opened, and when its URL went away.
     login_page: Option<(crate::Opened, Option<std::time::Instant>)>,
+    /// Knows the terminal's image protocol (Kitty, Sixel, iTerm2, or
+    /// half-blocks) and cell size.
+    picker: Picker,
+    /// The current cover, ready to render, and which file it came from.
+    cover: Option<StatefulProtocol>,
+    cover_path: Option<String>,
 }
 
-fn draw(f: &mut Frame, app: &App) {
+/// Decode the track's cached cover when it changes. Covers are local files
+/// (the daemon caches, and prefetches, them), so this never touches the
+/// network.
+fn refresh_cover(app: &mut App) {
+    let path = app.state.track.as_ref().and_then(|t| t.cover_path.clone());
+    if path == app.cover_path {
+        return;
+    }
+    app.cover = path
+        .as_deref()
+        .and_then(|p| {
+            image::ImageReader::open(p)
+                .ok()?
+                .with_guessed_format()
+                .ok()?
+                .decode()
+                .ok()
+        })
+        .map(|img| app.picker.new_resize_protocol(img));
+    app.cover_path = path;
+}
+
+/// Where the cover goes, and the rect left for everything else.
+fn place_cover(app: &App, body: Rect, text_rows: u16) -> (Option<Rect>, Rect) {
+    let lay = &app.settings.layout;
+    if app.cover.is_none() || lay.cover == CoverPlacement::None || body.height < 6 {
+        return (None, body);
+    }
+    // Cells are taller than wide: a square cover is wider in columns.
+    let font = app.picker.font_size();
+    let (fw, fh) = (font.width, font.height);
+    let cols_for = |rows: u16| (rows as u32 * fh.max(1) as u32 / fw.max(1) as u32) as u16;
+    let want = |fits: u16| {
+        let fits = fits.min(24);
+        if lay.cover_size > 0 {
+            lay.cover_size.min(fits)
+        } else {
+            fits
+        }
+    };
+
+    // Beside the text, if there's room for the text too.
+    if lay.cover == CoverPlacement::Left {
+        let rows = want(body.height.saturating_sub(2));
+        let cols = cols_for(rows);
+        if rows >= 4 && body.width >= cols + 36 {
+            let top = body.y + (body.height - rows) / 2;
+            let cover = Rect {
+                x: body.x + 2,
+                y: top,
+                width: cols,
+                height: rows,
+            };
+            let rest_x = cover.x + cols + 3;
+            let rest = Rect {
+                x: rest_x,
+                y: body.y,
+                width: body.right().saturating_sub(rest_x + 1),
+                height: body.height,
+            };
+            return (Some(cover), rest);
+        }
+    }
+    // Above the text: leave room for text, progress, time and status.
+    let rows = want(body.height.saturating_sub(text_rows + 6));
+    let cols = cols_for(rows).min(body.width);
+    if rows < 4 {
+        return (None, body);
+    }
+    let cover = Rect {
+        x: body.x + (body.width - cols) / 2,
+        y: body.y + 1,
+        width: cols,
+        height: rows,
+    };
+    let rest = Rect {
+        x: body.x,
+        y: cover.bottom(),
+        width: body.width,
+        height: body.bottom() - cover.bottom(),
+    };
+    (Some(cover), rest)
+}
+
+fn draw(f: &mut Frame, app: &mut App) {
     let p = app.settings.palette;
     let lay = &app.settings.layout;
     let base = Style::new().fg(p.fg).bg(p.bg);
@@ -348,8 +456,19 @@ fn draw(f: &mut Frame, app: &App) {
         }
     }
 
-    // Vertical layout: text block centered, then progress, status, help.
+    // Help on the bottom row; the cover, then text, progress and status in
+    // the rest.
     let text_h = lines.len() as u16;
+    let [body, help_row] = Layout::vertical([
+        Constraint::Fill(1),
+        Constraint::Length(if lay.show_help { 1 } else { 0 }),
+    ])
+    .areas(inner);
+    let (cover_rect, content) = if s.track.is_some() {
+        place_cover(app, body, text_h)
+    } else {
+        (None, body)
+    };
     let rows = Layout::vertical([
         Constraint::Fill(1),
         Constraint::Length(text_h),
@@ -358,9 +477,8 @@ fn draw(f: &mut Frame, app: &App) {
         Constraint::Length(1),
         Constraint::Length(if lay.show_status { 1 } else { 0 }),
         Constraint::Fill(1),
-        Constraint::Length(if lay.show_help { 1 } else { 0 }),
     ])
-    .split(inner);
+    .split(content);
 
     f.render_widget(Paragraph::new(lines).alignment(align), rows[1]);
 
@@ -371,10 +489,10 @@ fn draw(f: &mut Frame, app: &App) {
         } else {
             0.0
         };
-        let bar_w = inner.width.saturating_sub(4).min(60);
+        let bar_w = content.width.saturating_sub(4).min(60);
         let x = match lay.align {
-            Align::Center => inner.x + (inner.width - bar_w) / 2,
-            Align::Left => inner.x,
+            Align::Center => content.x + (content.width - bar_w) / 2,
+            Align::Left => content.x,
         };
         f.render_widget(
             Paragraph::new(progress_line(bar_w, ratio, lay.progress, &p)),
@@ -426,7 +544,15 @@ fn draw(f: &mut Frame, app: &App) {
                 Style::new().fg(p.muted),
             ),
         };
-        f.render_widget(Paragraph::new(help).alignment(Alignment::Center), rows[7]);
+        f.render_widget(Paragraph::new(help).alignment(Alignment::Center), help_row);
+    }
+
+    if let (Some(rect), Some(cover)) = (cover_rect, app.cover.as_mut()) {
+        f.render_stateful_widget(
+            StatefulImage::default().resize(Resize::Fit(Some(FilterType::Triangle))),
+            rect,
+            cover,
+        );
     }
 }
 
@@ -439,7 +565,10 @@ pub fn run() -> Result<()> {
     let exe_stamp = mtime(&exe);
 
     let mut terminal = ratatui::init();
-    let result = event_loop(&mut terminal, &exe, exe_stamp);
+    // Ask the terminal which image protocol it speaks. This reads its reply
+    // from stdin, so it must happen before the keyboard thread starts.
+    let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::halfblocks());
+    let result = event_loop(&mut terminal, &exe, exe_stamp, picker);
     ratatui::restore();
 
     if let Ok(true) = result {
@@ -494,6 +623,7 @@ fn event_loop(
     terminal: &mut DefaultTerminal,
     exe: &Path,
     exe_stamp: Option<(SystemTime, u64)>,
+    picker: Picker,
 ) -> Result<bool> {
     let (tx, rx) = mpsc::channel::<Msg>();
     // Keyboard on its own thread, so the loop below sleeps on one channel
@@ -515,12 +645,16 @@ fn event_loop(
         settings: load_settings(),
         login_requested: false,
         login_page: None,
+        picker,
+        cover: None,
+        cover_path: None,
     };
     let mut watched = (mtime(&theme_path()), mtime(&tui_path()));
     let mut last_check = std::time::Instant::now();
 
     loop {
-        terminal.draw(|f| draw(f, &app))?;
+        refresh_cover(&mut app);
+        terminal.draw(|f| draw(f, &mut app))?;
 
         // While playing, wake 4x a second to move the clock; otherwise once
         // a second for update/config checks only.
