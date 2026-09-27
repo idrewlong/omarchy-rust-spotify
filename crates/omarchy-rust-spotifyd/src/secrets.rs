@@ -51,15 +51,26 @@ impl Secrets {
         self.dir.join("credentials.json")
     }
 
-    /// The saved login, importing an older one on first run: from this
-    /// daemon's M0 location, or from spotify-player (same librespot format),
-    /// so switching over needs no new sign-in.
+    /// Marks that the one-time import has been done, so signing out doesn't
+    /// just pull the old login back in.
+    fn import_marker(&self) -> PathBuf {
+        self.dir.join(".imported")
+    }
+
+    /// The saved login, importing an older one on the very first run: from
+    /// this daemon's M0 location, or from spotify-player (same librespot
+    /// format), so switching over needs no new sign-in.
     pub fn load_session(&self) -> Option<Credentials> {
         tighten(&self.dir, 0o700);
         tighten(&self.file(), 0o600);
         if let Some(creds) = self.cache.credentials() {
+            let _ = std::fs::write(self.import_marker(), "");
             return Some(creds);
         }
+        if self.import_marker().exists() {
+            return None;
+        }
+        let _ = std::fs::write(self.import_marker(), "");
         let candidates = [
             home().join(".cache/omarchy-rust-spotify/credentials.json"),
             home().join(".cache/spotify-player/credentials.json"),

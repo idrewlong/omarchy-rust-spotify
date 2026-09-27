@@ -100,6 +100,9 @@ pub struct PlayerState {
     pub volume: u8,
     pub device_name: String,
     pub error: Option<DaemonError>,
+    /// Set while a sign-in waits for approval: the client that asked opens
+    /// it in a browser. Cleared when sign-in finishes or gives up.
+    pub login_url: Option<String>,
 }
 
 impl PlayerState {
@@ -153,6 +156,11 @@ pub enum Command {
     Volume {
         pct: u8,
     },
+    /// Open Spotify's sign-in page; the daemon catches the redirect on
+    /// 127.0.0.1:8989 and reconnects with the new login.
+    Login,
+    /// Forget the saved login and disconnect.
+    Logout,
 }
 
 /// Daemon → client.

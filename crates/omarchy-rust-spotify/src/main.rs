@@ -1,6 +1,8 @@
 //! omarchy-rust-spotify: the CLI. Talks to the daemon over its socket.
 //!
 //!   status              current track and state
+//!   login               sign in to Spotify in the browser
+//!   logout              forget the saved login
 //!   watch               stream state changes as JSON lines
 //!   cmd <command> [arg] play | pause | play-pause | next | prev |
 //!                       seek <ms> | shuffle <on|off> | repeat <off|context|track> |
@@ -110,6 +112,7 @@ fn parse_cmd(args: &[String]) -> Result<Command> {
             "volume" => Command::Volume {
                 pct: arg(1)?.parse()?,
             },
+            "logout" => Command::Logout,
             c => bail!("unknown command: {c}"),
         },
     )
@@ -280,11 +283,107 @@ fn roundtrip(n: usize) -> Result<()> {
     Ok(())
 }
 
+/// Open a URL in the user's browser, in its own systemd unit when uwsm is
+/// around (so it doesn't belong to this terminal).
+fn open_url(url: &str) {
+    use std::process::{Command, Stdio};
+    let quiet = |c: &mut Command| {
+        c.stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+    };
+    let mut uwsm = Command::new("uwsm-app");
+    uwsm.args(["--", "xdg-open", url]);
+    quiet(&mut uwsm);
+    let spawned = uwsm.spawn().or_else(|_| {
+        let mut xdg = Command::new("xdg-open");
+        xdg.arg(url);
+        quiet(&mut xdg);
+        xdg.spawn()
+    });
+    if spawned.is_err() {
+        eprintln!("(couldn't open a browser; open the link above yourself)");
+    }
+}
+
+fn login() -> Result<()> {
+    let mut c = Client::connect()?;
+    let mut state = c.subscribe()?;
+    let id = c.id();
+    c.send(&ClientMsg::Cmd {
+        id,
+        cmd: Command::Login,
+    })?;
+    // Wake up every second so a sign-in that ends without a reconnect
+    // (denied, timed out) doesn't leave us waiting forever.
+    c.writer
+        .set_read_timeout(Some(std::time::Duration::from_secs(1)))?;
+    let mut opened = false;
+    let mut saw_disconnect = false;
+    let mut url_cleared_at: Option<std::time::Instant> = None;
+    loop {
+        let msg = match c.recv() {
+            Ok(m) => Some(m),
+            Err(e)
+                if e.downcast_ref::<std::io::Error>().is_some_and(|e| {
+                    matches!(
+                        e.kind(),
+                        std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                    )
+                }) =>
+            {
+                None
+            }
+            Err(e) => return Err(e),
+        };
+        if let Some(ServerMsg::Ev { delta, .. }) = msg {
+            let mut v = serde_json::to_value(&state)?;
+            if let Some(obj) = v.as_object_mut() {
+                obj.extend(delta);
+            }
+            state = serde_json::from_value(v)?;
+        }
+
+        if let Some(url) = state.login_url.as_ref().filter(|_| !opened) {
+            opened = true;
+            println!("Approve the sign-in in your browser:\n  {url}");
+            open_url(url);
+        }
+        if opened && state.login_url.is_none() && url_cleared_at.is_none() {
+            url_cleared_at = Some(std::time::Instant::now());
+        }
+        if opened && !state.connected {
+            saw_disconnect = true;
+        }
+        if saw_disconnect && state.connected && state.error.is_none() {
+            println!(
+                "Signed in. \"{}\" is ready in your Spotify apps.",
+                state.device_name
+            );
+            return Ok(());
+        }
+        if state.error == Some(DaemonError::PremiumRequired) {
+            bail!("Spotify Premium is required for playback");
+        }
+        if url_cleared_at.is_some_and(|t| t.elapsed() > std::time::Duration::from_secs(15)) {
+            bail!("sign-in didn't complete (see `journalctl --user -u omarchy-rust-spotifyd`)");
+        }
+    }
+}
+
+fn logout() -> Result<()> {
+    cmd(&["logout".into()])?;
+    println!("Signed out.");
+    Ok(())
+}
+
 fn main() -> Result<()> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("status") | None => status(),
         Some("watch") => watch(),
+        Some("login") => login(),
+        Some("logout") => logout(),
         Some("cmd") => cmd(&args[1..]),
         Some("debug") if args.get(1).map(String::as_str) == Some("latency") => {
             latency(args.get(2).map(|n| n.parse()).transpose()?.unwrap_or(20))

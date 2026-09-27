@@ -24,6 +24,8 @@ pub enum Input {
     Connected(bool),
     /// Set or clear the reason playback can't happen.
     Error(Option<DaemonError>),
+    /// A sign-in URL is waiting for approval (or no longer is).
+    LoginUrl(Option<String>),
 }
 
 /// One published change.
@@ -181,6 +183,7 @@ pub async fn run(
                         }
                     }
                     Input::Error(error) => state.error = error,
+                    Input::LoginUrl(url) => state.login_url = url,
                 }
                 (received, old, Effects::default())
             }

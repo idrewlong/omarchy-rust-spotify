@@ -5,6 +5,7 @@ mod covers;
 mod ipc;
 mod latency;
 mod mpris;
+mod oauth;
 mod secrets;
 mod sink;
 mod state;
@@ -49,13 +50,88 @@ fn device_id(dir: &Path) -> Result<String> {
     Ok(id)
 }
 
-async fn execute(
-    spirc: Option<&Spirc>,
-    state: &watch::Receiver<(u64, PlayerState)>,
-    interrupt: &sink::Interrupt,
-    cmd: Command,
-) -> Result<()> {
-    let Some(spirc) = spirc else {
+/// librespot's desktop-client scopes (as librespot's own binary requests).
+const OAUTH_SCOPES: &[&str] = &[
+    "app-remote-control",
+    "playlist-modify",
+    "playlist-modify-private",
+    "playlist-modify-public",
+    "playlist-read",
+    "playlist-read-collaborative",
+    "playlist-read-private",
+    "streaming",
+    "ugc-image-upload",
+    "user-follow-modify",
+    "user-follow-read",
+    "user-library-modify",
+    "user-library-read",
+    "user-modify",
+    "user-modify-playback-state",
+    "user-modify-private",
+    "user-personalized",
+    "user-read-birthdate",
+    "user-read-currently-playing",
+    "user-read-email",
+    "user-read-play-history",
+    "user-read-playback-position",
+    "user-read-playback-state",
+    "user-read-private",
+    "user-read-recently-played",
+    "user-top-read",
+];
+
+/// Everything the command executor needs besides the command.
+struct Ctx {
+    state: watch::Receiver<(u64, PlayerState)>,
+    spirc: watch::Receiver<Option<Arc<Spirc>>>,
+    interrupt: sink::Interrupt,
+    secrets: secrets::Secrets,
+    client_id: String,
+    credentials_changed: Arc<Notify>,
+    inputs: mpsc::UnboundedSender<state::Input>,
+    /// The sign-in in progress; a new one replaces (aborts) it.
+    login: std::sync::Mutex<Option<tokio::task::JoinHandle<()>>>,
+}
+
+/// Sign in: publish the authorize URL for the client to open, wait for the
+/// redirect, save the login and make the supervisor reconnect. See oauth.rs
+/// for why the daemon doesn't open the browser itself.
+async fn login(ctx: Arc<Ctx>) -> Result<()> {
+    let pending = oauth::start(&ctx.client_id, OAUTH_SCOPES).await?;
+    let _ = ctx
+        .inputs
+        .send(state::Input::LoginUrl(Some(pending.url.clone())));
+    let result = pending.finish().await;
+    let _ = ctx.inputs.send(state::Input::LoginUrl(None));
+    let token = result?;
+    // librespot trades this for reusable credentials once connected, and
+    // saves those in its place.
+    ctx.secrets
+        .save_session(&librespot_core::authentication::Credentials::with_access_token(token));
+    tracing::info!("signed in; reconnecting");
+    if let Some(spirc) = ctx.spirc.borrow().as_ref() {
+        let _ = spirc.shutdown();
+    }
+    ctx.credentials_changed.notify_one();
+    Ok(())
+}
+
+async fn execute(ctx: &Ctx, cmd: Command) -> Result<()> {
+    match cmd {
+        Command::Logout => {
+            ctx.secrets.clear_session();
+            if let Some(spirc) = ctx.spirc.borrow().as_ref() {
+                let _ = spirc.shutdown();
+            }
+            ctx.credentials_changed.notify_one();
+            tracing::info!("signed out");
+            return Ok(());
+        }
+        _ => {}
+    }
+    let spirc = ctx.spirc.borrow().clone();
+    let (state, interrupt) = (&ctx.state, &ctx.interrupt);
+    let Some(spirc) = spirc.as_deref() else {
         anyhow::bail!("not connected to Spotify");
     };
     let (active, playing) = {
@@ -96,6 +172,7 @@ async fn execute(
         Command::Volume { pct } => {
             spirc.set_volume((pct.min(100) as u32 * u16::MAX as u32 / 100) as u16)?
         }
+        Command::Login | Command::Logout => unreachable!("handled elsewhere"),
     }
     Ok(())
 }
@@ -198,16 +275,36 @@ async fn run() -> Result<()> {
         }
     });
 
-    tokio::spawn({
-        let state = snapshot_rx.clone();
-        let spirc = spirc_rx.clone();
-        async move {
-            while let Some(cmd) = cmds_rx.recv().await {
-                tracing::debug!(?cmd, "command");
-                let current = spirc.borrow().clone();
-                if let Err(e) = execute(current.as_deref(), &state, &interrupt, cmd).await {
-                    tracing::warn!("command failed: {e:#}");
+    let ctx = Arc::new(Ctx {
+        state: snapshot_rx.clone(),
+        spirc: spirc_rx.clone(),
+        interrupt,
+        secrets: secrets.clone(),
+        client_id: session_config.client_id.clone(),
+        credentials_changed: credentials_changed.clone(),
+        inputs: inputs_tx.clone(),
+        login: Default::default(),
+    });
+    tokio::spawn(async move {
+        while let Some(cmd) = cmds_rx.recv().await {
+            tracing::debug!(?cmd, "command");
+            // Login waits on the browser; don't hold up other commands.
+            if cmd == Command::Login {
+                let task = tokio::spawn({
+                    let ctx = ctx.clone();
+                    async move {
+                        if let Err(e) = login(ctx).await {
+                            tracing::warn!("sign-in failed: {e:#}");
+                        }
+                    }
+                });
+                if let Some(old) = ctx.login.lock().unwrap().replace(task) {
+                    // Dropping its listener frees port 8989 for the new one.
+                    old.abort();
+                    let _ = ctx.inputs.send(state::Input::LoginUrl(None));
                 }
+            } else if let Err(e) = execute(&ctx, cmd).await {
+                tracing::warn!("command failed: {e:#}");
             }
         }
     });

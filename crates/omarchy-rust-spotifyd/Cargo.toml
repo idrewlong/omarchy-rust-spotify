@@ -22,3 +22,7 @@ bytes = "1"
 libc = "0.2"
 libpulse-binding = { version = "2", default-features = false }
 libpulse-simple-binding = { version = "2", default-features = false }
+sha2 = "0.11.0"
+base64 = "0.22"
+rand = "0.9"
+form_urlencoded = "1.2"
