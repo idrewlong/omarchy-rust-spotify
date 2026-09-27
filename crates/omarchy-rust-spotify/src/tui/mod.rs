@@ -35,6 +35,7 @@ use serde::Deserialize;
 
 mod classic;
 mod gpu;
+mod help;
 mod ipod;
 mod itunes;
 mod library;
@@ -393,6 +394,8 @@ struct App {
     ipod: ipod::Ipod,
     viz: visualizer::Viz,
     lyrics: lyrics::Lyrics,
+    /// The `?` key overlay is showing.
+    help: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -550,6 +553,9 @@ fn draw(f: &mut Frame, app: &mut App) {
         Skin::Wmp2000 => wmp::draw(f, app),
         Skin::Lyrics => lyrics::draw(f, app),
     }
+    if app.help {
+        help::draw(f, app);
+    }
 }
 
 // -------------------------------------------------------------------- loop
@@ -627,6 +633,10 @@ fn show_gpu_frame(app: &mut App, stream: &mut Option<gpu::Stream>) {
         *stream = None;
         return;
     };
+    // The key overlay is drawn over the field: don't paint a frame on it.
+    if app.help {
+        return;
+    }
     let (cw, ch) = cell_pixels().unwrap_or_else(|| {
         let f = app.picker.font_size();
         (f.width as u32, f.height as u32)
@@ -794,6 +804,10 @@ fn key_command(app: &mut App, code: KeyCode, mods: KeyModifiers) -> Option<Optio
             cycle_skin(app, -1);
             None
         }
+        KeyCode::Char('?') => {
+            app.help = true;
+            None
+        }
         KeyCode::Char('L') => {
             app.login_requested = true;
             Some(Command::Login)
@@ -858,6 +872,7 @@ fn event_loop(
         ipod: Default::default(),
         viz: Default::default(),
         lyrics: Default::default(),
+        help: false,
     };
     app.viz.style = VIZ_OVERRIDE
         .get()
@@ -927,6 +942,11 @@ fn event_loop(
         for msg in msgs {
             match msg {
                 Msg::Input(_) if started.elapsed() < Duration::from_millis(500) => {}
+                // With the key overlay up, any key just closes it.
+                Msg::Input(Event::Key(k)) if k.kind == KeyEventKind::Press && app.help => {
+                    app.help = false;
+                    app.needs_clear = true;
+                }
                 Msg::Input(Event::Key(k)) if k.kind == KeyEventKind::Press => {
                     // The library view gets keys first (navigation, search).
                     if app.settings.layout.skin == Skin::Ipod {
@@ -1135,6 +1155,7 @@ pub(super) mod tests {
             hits: Vec::new(),
             browser: Default::default(),
             ipod: Default::default(),
+            help: false,
             lyrics: Default::default(),
             viz: Default::default(),
         }
@@ -1213,6 +1234,8 @@ pub(super) mod tests {
                             app.viz.step();
                         }
                     }
+                    // The key overlay too, over every skin.
+                    app.help = h % 2 == 0;
                     let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
                     term.draw(|f| draw(f, &mut app))
                         .unwrap_or_else(|e| panic!("{skin:?} {w}x{h}: {e}"));

@@ -32,7 +32,8 @@ Requires Spotify Premium (Spotify's rule for third-party playback).
 - **Player** (also **Spotify (Rust)** in the app launcher): your library,
   playlists (most recently played first, like Spotify) and search. `t`
   steps through the skins and every visualizer, `T` goes back. Space
-  plays/pauses, `n`/`p` skip, `/` searches.
+  plays/pauses, `n`/`p` skip, `/` searches, `?` lists every key for the
+  skin you're in.
 - **Lyrics:** a skin of its own. Synced lyrics follow the song, the
   current line highlighted in the middle; click a line to jump there.
   From [LRCLIB](https://lrclib.net), the open lyrics database; also

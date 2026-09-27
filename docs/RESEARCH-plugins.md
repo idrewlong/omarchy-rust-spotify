@@ -113,7 +113,8 @@ Across the rest of the field:
    everywhere (incl. the bar card), artist and album pages, playlist
    add/remove, Spotify Connect device switching (incl. Sonos via Connect,
    like ciryon's), podcasts and audiobooks (ninepointlabs).
-4. **Keyboard discoverability:** a `?` overlay of every key, per skin.
+4. ~~**Keyboard discoverability**~~ Done: `?` shows the keys that work
+   in the current skin.
 5. ~~**Lyrics**~~ Done: a Lyrics skin (synced, click a line to seek) and
    `omarchy-rust-spotify lyrics`, from LRCLIB. (Spotify's own lyrics
    service 404s for librespot sessions.)
