@@ -206,7 +206,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
             Repeat::Track => "repeat one",
         };
         let on = |b: bool| if b { p.accent } else { p.muted };
-        let status = Line::from(vec![
+        let mut spans = vec![
             Span::styled(play, Style::new().fg(p.fg)),
             Span::styled("   shuffle", Style::new().fg(on(s.shuffle))),
             Span::styled(
@@ -215,7 +215,15 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
             ),
             Span::styled(format!("   vol {}%", s.volume), Style::new().fg(p.muted)),
             Span::styled(format!("   {}", s.device_name), Style::new().fg(p.muted)),
-        ]);
+        ];
+        // Drop the least important readouts (device, then volume) rather
+        // than cut one off mid-word.
+        while spans.len() > 3
+            && spans.iter().map(|s| s.width()).sum::<usize>() > rows[5].width as usize
+        {
+            spans.pop();
+        }
+        let status = Line::from(spans);
         f.render_widget(Paragraph::new(status).alignment(align), rows[5]);
     }
 

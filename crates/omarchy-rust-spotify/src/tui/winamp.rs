@@ -55,7 +55,7 @@ fn titlebar(buf: &mut Buffer, r: Rect, title: &str, clicks: &mut Vec<(Rect, Hit)
             .add_modifier(Modifier::BOLD),
     );
     if closable && r.width > 10 {
-        let x = r.right() - 3;
+        let x = r.right() - 4;
         text(
             buf,
             x,
@@ -152,13 +152,17 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     };
     fill(buf, clock, rgb(LCD_BG), rgb(GREEN));
     bevel(buf, clock, rgb(LCD_BG), rgb(DARK), rgb(LIGHT));
-    let state_glyph = match s.status {
-        Status::Playing => "▶",
-        Status::Paused => "❚❚",
-        Status::Loading => "…",
-        Status::Stopped => "■",
+    // The play state as a 3-row icon, the digits' height; single glyphs
+    // like ⏸ render as a speck beside them.
+    let icon: [&str; 3] = match s.status {
+        Status::Playing => ["█▄ ", "███", "█▀ "],
+        Status::Paused => ["█ █", "█ █", "█ █"],
+        Status::Loading => ["   ", "···", "   "],
+        Status::Stopped => ["   ", "██ ", "██ "],
     };
-    text(buf, clock.x + 2, clock.y + 1, 2, state_glyph, lcd(GREEN));
+    for (i, row) in icon.iter().enumerate() {
+        text(buf, clock.x + 1, clock.y + 1 + i as u16, 3, row, lcd(GREEN));
+    }
     let pos = s.position_now_ms();
     let t = if s.track.is_some() {
         format!("{:02}:{:02}", pos / 60_000, pos / 1000 % 60)
@@ -339,7 +343,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     for (label, hit) in [
         ("⏮", Hit::Cmd(Command::Prev)),
         ("▶", Hit::Cmd(Command::Play)),
-        ("❚❚", Hit::Cmd(Command::Pause)),
+        ("⏸", Hit::Cmd(Command::Pause)),
         ("■", Hit::Cmd(Command::Pause)),
         ("⏭", Hit::Cmd(Command::Next)),
     ] {

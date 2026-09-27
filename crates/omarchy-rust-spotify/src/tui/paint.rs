@@ -76,6 +76,45 @@ pub fn text(buf: &mut Buffer, x: u16, y: u16, max: u16, s: &str, style: Style) {
     buf.set_stringn(x, y, s, max as usize, style);
 }
 
+/// Word-wraps `s` to at most `lines` lines of `width` columns; the last
+/// line ends in "…" if anything was left over. Long words are cut.
+pub fn wrap(s: &str, width: usize, lines: usize) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    let mut cur = String::new();
+    let words: Vec<&str> = s.split_whitespace().collect();
+    let mut i = 0;
+    while i < words.len() && width > 0 {
+        let w = words[i];
+        let need = cur.chars().count() + usize::from(!cur.is_empty()) + w.chars().count();
+        if need <= width {
+            if !cur.is_empty() {
+                cur.push(' ');
+            }
+            cur.push_str(w);
+            i += 1;
+        } else if cur.is_empty() {
+            // A word longer than the line: cut it.
+            cur = w.chars().take(width).collect();
+            i += 1;
+        } else if out.len() + 1 < lines {
+            out.push(std::mem::take(&mut cur));
+        } else {
+            break;
+        }
+    }
+    if i < words.len() && width > 0 {
+        // Out of lines: mark the cut on the last one.
+        let mut t: String = cur.chars().take(width.saturating_sub(1)).collect();
+        t = t.trim_end().to_string();
+        t.push('…');
+        cur = t;
+    }
+    if !cur.is_empty() {
+        out.push(cur);
+    }
+    out
+}
+
 pub fn rgb(hex: u32) -> Color {
     Color::Rgb((hex >> 16) as u8, (hex >> 8) as u8, hex as u8)
 }
@@ -156,5 +195,18 @@ mod tests {
         assert_eq!(sextant(0b101010), "▐");
         assert_eq!(sextant(0b111110), "🬻"); // all but top-left
         assert_eq!(sextant(0b010110), "🬔"); // just past the left-half gap
+    }
+}
+
+#[cfg(test)]
+mod wrap_tests {
+    use super::wrap;
+
+    #[test]
+    fn wraps_and_ellipsizes() {
+        assert_eq!(wrap("a bb ccc", 4, 3), vec!["a bb", "ccc"]);
+        assert_eq!(wrap("a bb ccc dddd", 4, 2), vec!["a bb", "ccc…"]);
+        assert_eq!(wrap("abcdefgh", 3, 1), vec!["abc"]);
+        assert!(wrap("x", 0, 2).is_empty());
     }
 }

@@ -235,6 +235,20 @@ async fn execute(ctx: &Ctx, cmd: Command) -> Result<()> {
     // (Spotify Connect transfer), whatever device it's on now.
     if !active && matches!(cmd, Command::Play | Command::PlayPause) {
         spirc.transfer(None)?;
+        // The transfer keeps the old device's play/pause state, so playback
+        // taken over from a paused session would arrive paused. The user
+        // pressed play: start it once the track has landed here.
+        let (mut state, spirc) = (ctx.state.clone(), ctx.spirc.borrow().clone());
+        tokio::spawn(async move {
+            let landed = tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                state.wait_for(|(_, s)| s.active && s.track.is_some()),
+            )
+            .await;
+            if let (Ok(Ok(_)), Some(spirc)) = (landed, spirc) {
+                let _ = spirc.play();
+            }
+        });
         return Ok(());
     }
     // Commands that cut the current audio: let the player thread reach them

@@ -588,7 +588,7 @@ fn main() -> Result<()> {
         Some("status") | None => status(),
         Some("watch") => watch(),
         Some("ls") => ls(&args[1..]),
-        Some("tui") => tui::run(),
+        Some("tui") => tui::run(&args[1..]),
         Some("login") => login(None),
         Some("login-app") => login(Some(args.get(1).cloned())),
         Some("play") => {

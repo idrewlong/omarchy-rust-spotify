@@ -30,11 +30,11 @@ pub(super) struct Viz {
 
 impl Viz {
     /// A new frame from the daemon. Its dB scale mostly sits in the middle,
-    /// so stretch it: 25%..85% of the range fills the screen.
+    /// so stretch it: 30%..95% of the range fills the screen.
     pub(super) fn frame(&mut self, bands: &[u8]) {
         self.target = bands
             .iter()
-            .map(|&b| ((b as f32 / 255.0 - 0.25) / 0.60).clamp(0.0, 1.0))
+            .map(|&b| ((b as f32 / 255.0 - 0.30) / 0.65).clamp(0.0, 1.0))
             .collect();
         let n = self.target.len();
         self.level.resize(n, 0.0);
@@ -123,7 +123,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     let cols = bands.min(field.width as usize).max(1);
     let (col_w, gap) = {
         let w = field.width as usize / cols;
-        if w >= 3 { (w - 1, 1) } else { (w.max(1), 0) }
+        if w >= 2 { (w - 1, 1) } else { (1, 0) }
     };
     let used = (col_w + gap) * cols;
     let x0 = field.x + (field.width.saturating_sub(used as u16)) / 2;
@@ -172,6 +172,9 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
                 // Symmetric about the middle row, in half-row steps.
                 let mid = field.y as f32 + h / 2.0;
                 let half = level * h / 2.0;
+                if half < 0.25 {
+                    continue;
+                }
                 for row in field.top()..field.bottom() {
                     let d = ((row as f32 + 0.5) - mid).abs();
                     if d > half + 0.5 {
@@ -189,6 +192,24 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
                 }
             }
         }
+    }
+
+    // An empty field reads as broken; say why it's still.
+    if s.status != Status::Playing && !app.viz.animating() {
+        let label = match s.status {
+            Status::Paused => "paused",
+            Status::Loading => "loading…",
+            _ => "nothing playing",
+        };
+        let n = label.len() as u16;
+        text(
+            buf,
+            field.x + field.width.saturating_sub(n) / 2,
+            field.y + field.height / 2,
+            n,
+            label,
+            white(0x505050),
+        );
     }
 
     // Progress and time at the bottom.

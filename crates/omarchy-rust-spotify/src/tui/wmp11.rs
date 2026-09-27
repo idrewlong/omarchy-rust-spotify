@@ -5,7 +5,7 @@
 
 use ratatui::buffer::Buffer;
 
-use super::library::{ListStyle, draw_list, draw_sidebar};
+use super::library::{ListStyle, columns, draw_list, draw_sidebar};
 use super::paint::{fill, lerp, rgb, text};
 use super::*;
 
@@ -137,15 +137,6 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     fill(buf, list, rgb(LIB_BG), rgb(LIB_TEXT));
     let hdr = Rect { height: 1, ..list };
     fill(buf, hdr, rgb(HEADER_BG), rgb(LIB_TEXT));
-    text(
-        buf,
-        hdr.x + 2,
-        hdr.y,
-        hdr.width.saturating_sub(4),
-        "Title",
-        Style::new().fg(rgb(0x4d4d4d)).bg(rgb(HEADER_BG)),
-    );
-
     // Transport bar: black gloss, seek bar on top, big round play button.
     let bar = Rect {
         x: area.x,
@@ -206,7 +197,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         play.x,
         play.y + 1,
         7,
-        &format!("│  {}  │", if playing { "❚❚" } else { "▶ " }),
+        &format!("│  {}  │", if playing { "⏸ " } else { "▶ " }),
         Style::new()
             .fg(rgb(0xffffff))
             .bg(rgb(GLOW_BG))
@@ -291,7 +282,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
                 buf,
                 bar.x + 2,
                 bar.y + 1,
-                info_w,
+                (mid - 4).saturating_sub(bar.x + 2),
                 &t.name,
                 Style::new()
                     .fg(rgb(0xffffff))
@@ -331,6 +322,29 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         numbered: false,
         playing_mark: "♪ ",
     };
+    // Column headers, lined up with draw_list's columns.
+    let cols = columns(list.width, &st);
+    let hdr_st = Style::new().fg(rgb(0x4d4d4d)).bg(rgb(HEADER_BG));
+    let name_x = list.x + (cols.num_w + cols.mark_w) as u16;
+    let sub_x = name_x + cols.name_w as u16 + 1;
+    let time_x = sub_x + cols.sub_w as u16 + 1 + cols.time_w as u16 - 4;
+    text(
+        f.buffer_mut(),
+        name_x,
+        list.y,
+        cols.name_w as u16,
+        "Title",
+        hdr_st,
+    );
+    text(
+        f.buffer_mut(),
+        sub_x,
+        list.y,
+        cols.sub_w as u16,
+        "Artist",
+        hdr_st,
+    );
+    text(f.buffer_mut(), time_x, list.y, 4, "Time", hdr_st);
     let nav_st = ListStyle {
         bg: rgb(NAV_BG),
         ..st.clone()

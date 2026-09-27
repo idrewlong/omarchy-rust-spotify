@@ -7,6 +7,7 @@
 
 use ratatui::buffer::Buffer;
 
+use super::paint::wrap;
 use super::*;
 
 const FACE: Color = Color::Rgb(0xd4, 0xd0, 0xc8);
@@ -270,14 +271,18 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     match &s.track {
         Some(t) => {
             text(buf, text_x, y, tw, "NOW PLAYING", lcd(LCD_DIM));
-            text(
-                buf,
-                text_x,
-                y + 1,
-                tw,
-                &t.name,
-                lcd(LCD).add_modifier(Modifier::BOLD),
-            );
+            let name = wrap(&t.name, tw as usize, 2);
+            for (i, line) in name.iter().enumerate() {
+                text(
+                    buf,
+                    text_x,
+                    y + 1 + i as u16,
+                    tw,
+                    line,
+                    lcd(LCD).add_modifier(Modifier::BOLD),
+                );
+            }
+            let y = y + name.len().saturating_sub(1) as u16;
             text(buf, text_x, y + 2, tw, &t.artists.join(", "), lcd(LCD));
             text(buf, text_x, y + 3, tw, &t.album, lcd(LCD_DIM));
             let state = match s.status {
@@ -378,7 +383,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         (
             1,
             8,
-            if playing { "❚❚" } else { "▶" },
+            if playing { "⏸" } else { "▶" },
             false,
             Hit::Cmd(Command::PlayPause),
         ),

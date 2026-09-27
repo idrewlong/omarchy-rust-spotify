@@ -8,12 +8,11 @@
 use ratatui::buffer::Buffer;
 
 use super::library::{ListStyle, draw_list, draw_sidebar};
-use super::paint::{bevel, fill, rgb, text};
+use super::paint::{bevel, fill, lerp, rgb, text};
 use super::*;
 
-const METAL_A: u32 = 0xc4c4c4;
-const METAL_B: u32 = 0xbdbdbd;
-const METAL_STREAK: u32 = 0xb2b2b2;
+const METAL_A: u32 = 0xcfcfcf;
+const METAL_B: u32 = 0xb4b4b4;
 const METAL_TEXT: u32 = 0x1e1e1e;
 const EDGE_LIGHT: u32 = 0xe6e6e6;
 const EDGE_DARK: u32 = 0x7c7c7c;
@@ -28,21 +27,26 @@ const LIST_TEXT: u32 = 0x000000;
 const AQUA: u32 = 0x3875d7;
 const HEADER_BG: u32 = 0xe4e4e4;
 
-/// Brushed metal: two tones by row and sparse streaks, deterministic so
-/// redraws don't shimmer.
+/// Brushed metal: a soft top-to-bottom sheen. Streak glyphs and per-cell
+/// grain both read as noise or blocky squares at terminal resolution.
 fn metal(buf: &mut Buffer, r: Rect) {
     let r = r.intersection(buf.area);
     for y in r.top()..r.bottom() {
-        let bg = rgb(if y % 2 == 0 { METAL_A } else { METAL_B });
+        let t = (y - r.top()) as f64 / r.height.max(2) as f64;
+        let base = lerp(METAL_A, METAL_B, t);
         for x in r.left()..r.right() {
-            let h = (x as u32).wrapping_mul(2654435761) ^ (y as u32).wrapping_mul(40503);
-            let (sym, fg) = if h % 7 == 0 {
-                ("─", rgb(METAL_STREAK))
-            } else {
-                (" ", rgb(METAL_TEXT))
-            };
-            buf[(x, y)].set_symbol(sym).set_fg(fg).set_bg(bg);
+            buf[(x, y)]
+                .set_symbol(" ")
+                .set_fg(rgb(METAL_TEXT))
+                .set_bg(base);
         }
+    }
+}
+
+/// Sets a cell's symbol and colour but keeps the metal behind it.
+fn put(buf: &mut Buffer, x: u16, y: u16, sym: &str, fg: u32) {
+    if buf.area.contains((x, y).into()) {
+        buf[(x, y)].set_symbol(sym).set_fg(rgb(fg));
     }
 }
 
@@ -63,10 +67,6 @@ fn round_button(
         width: w,
         height: 3,
     };
-    let ring = Style::new().fg(rgb(BTN_RING));
-    let inner = |bg: u32| Style::new().fg(rgb(METAL_TEXT)).bg(rgb(bg));
-    let top = format!("╭{}╮", "─".repeat(w as usize - 2));
-    let bottom = format!("╰{}╯", "─".repeat(w as usize - 2));
     let pad = (w as usize - 2 - glyph.chars().count()) / 2;
     let mid = format!(
         "{}{}{}",
@@ -74,18 +74,28 @@ fn round_button(
         glyph,
         " ".repeat(w as usize - 2 - pad - glyph.chars().count())
     );
-    text(buf, x, y, w, &top, ring.bg(rgb(METAL_A)));
-    text(buf, x, y + 1, 1, "│", ring.bg(rgb(METAL_B)));
+    // The ring sits on the metal; only the face is filled.
+    put(buf, x, y, "╭", BTN_RING);
+    put(buf, x + w - 1, y, "╮", BTN_RING);
+    put(buf, x, y + 2, "╰", BTN_RING);
+    put(buf, x + w - 1, y + 2, "╯", BTN_RING);
+    for i in 1..w - 1 {
+        put(buf, x + i, y, "─", BTN_RING);
+        put(buf, x + i, y + 2, "─", BTN_RING);
+    }
+    put(buf, x, y + 1, "│", BTN_RING);
+    put(buf, x + w - 1, y + 1, "│", BTN_RING);
     text(
         buf,
         x + 1,
         y + 1,
         w - 2,
         &mid,
-        inner(BTN_FACE).add_modifier(Modifier::BOLD),
+        Style::new()
+            .fg(rgb(METAL_TEXT))
+            .bg(rgb(BTN_FACE))
+            .add_modifier(Modifier::BOLD),
     );
-    text(buf, x + w - 1, y + 1, 1, "│", ring.bg(rgb(METAL_B)));
-    text(buf, x, y + 2, w, &bottom, ring.bg(rgb(METAL_A)));
     clicks.push((r, hit));
     w + 1
 }
@@ -119,7 +129,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         &mut clicks,
         x,
         top_y,
-        if playing { "❚❚" } else { "▶" },
+        if playing { "⏸" } else { "▶" },
         true,
         Hit::Cmd(Command::PlayPause),
     );
@@ -146,25 +156,19 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         vol.y,
         1,
         "◂",
-        Style::new().fg(rgb(METAL_TEXT)).bg(rgb(METAL_B)),
+        Style::new().fg(rgb(METAL_TEXT)),
     );
     for cx in vol.left()..vol.right() {
-        buf[(cx, vol.y)]
-            .set_symbol("─")
-            .set_fg(rgb(EDGE_DARK))
-            .set_bg(rgb(METAL_B));
+        buf[(cx, vol.y)].set_symbol("─").set_fg(rgb(EDGE_DARK));
     }
-    buf[(knob, vol.y)]
-        .set_symbol("●")
-        .set_fg(rgb(0x5a5a5a))
-        .set_bg(rgb(METAL_B));
+    buf[(knob, vol.y)].set_symbol("●").set_fg(rgb(0x5a5a5a));
     text(
         buf,
         vol.right() + 1,
         vol.y,
         1,
         "▸",
-        Style::new().fg(rgb(METAL_TEXT)).bg(rgb(METAL_B)),
+        Style::new().fg(rgb(METAL_TEXT)),
     );
     clicks.push((vol, Hit::Volume));
 
@@ -195,7 +199,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         lcd.y,
         lcd.width,
         &format!("╭{}╮", "─".repeat(lcd.width as usize - 2)),
-        edge.bg(rgb(METAL_A)),
+        edge,
     );
     text(
         buf,
@@ -203,11 +207,11 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         lcd.bottom() - 1,
         lcd.width,
         &format!("╰{}╯", "─".repeat(lcd.width as usize - 2)),
-        edge.bg(rgb(METAL_A)),
+        edge,
     );
     for y in lcd.y + 1..lcd.bottom() - 1 {
-        text(buf, lcd.x, y, 1, "│", edge.bg(rgb(METAL_B)));
-        text(buf, lcd.right() - 1, y, 1, "│", edge.bg(rgb(METAL_B)));
+        text(buf, lcd.x, y, 1, "│", edge);
+        text(buf, lcd.right() - 1, y, 1, "│", edge);
     }
     let inner_w = lcd.width - 4;
     let center = |buf: &mut Buffer, y: u16, t: &str, st: Style| {
@@ -400,9 +404,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         bottom_y,
         cw,
         &count,
-        Style::new()
-            .fg(rgb(METAL_TEXT))
-            .bg(rgb(if bottom_y % 2 == 0 { METAL_A } else { METAL_B })),
+        Style::new().fg(rgb(METAL_TEXT)),
     );
 
     let st = ListStyle {

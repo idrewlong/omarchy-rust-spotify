@@ -12,7 +12,7 @@
 use ratatui::buffer::Buffer;
 
 use super::library::{ListStyle, Out, draw_list, draw_sidebar};
-use super::paint::{fill, rgb, text};
+use super::paint::{fill, rgb, text, wrap};
 use super::*;
 
 const BODY: u32 = 0xf4f4f4;
@@ -174,54 +174,111 @@ pub(super) fn on_mouse(
     }
 }
 
+fn split(c: u32) -> [f64; 3] {
+    [
+        (c >> 16 & 0xff) as f64,
+        (c >> 8 & 0xff) as f64,
+        (c & 0xff) as f64,
+    ]
+}
+
+fn mix(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
+    let t = t.clamp(0.0, 1.0);
+    [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t)
+}
+
+fn to_color(c: [f64; 3]) -> Color {
+    Color::Rgb(c[0].round() as u8, c[1].round() as u8, c[2].round() as u8)
+}
+
+/// The wheel's shade at `d` (distance from the centre, 1.0 = rim): the
+/// centre button, a soft groove around it, the wheel, and a rim that fades
+/// into the body. Soft edges instead of one-pixel outline rings, which at
+/// sextant resolution only ever read as stair steps.
+fn wheel_shade(d: f64) -> [f64; 3] {
+    let (center, wheel, edge, body) = (split(CENTER), split(WHEEL), split(WHEEL_EDGE), split(BODY));
+    if d <= 0.36 {
+        center
+    } else if d <= 0.42 {
+        mix(edge, wheel, (d - 0.36) / 0.06)
+    } else if d <= 0.92 {
+        wheel
+    } else if d <= 1.0 {
+        mix(wheel, edge, (d - 0.92) / 0.08)
+    } else if d <= 1.03 {
+        mix(edge, body, (d - 1.0) / 0.03)
+    } else {
+        body
+    }
+}
+
 fn wheel(buf: &mut Buffer, area: Rect, cx: f64, cy: f64, r: f64, cw: f64, ch: f64) {
-    // Six "pixels" per cell (2 wide, 3 tall) via sextant characters.
-    let color = |x: f64, y: f64| {
-        let dx = (x - cx) * cw;
-        let dy = (y - cy) * ch;
-        let d = (dx * dx + dy * dy).sqrt() / r;
-        match d {
-            d if d <= 0.37 => CENTER,
-            d if d <= 0.40 => WHEEL_EDGE,
-            d if d <= 0.96 => WHEEL,
-            d if d <= 1.0 => WHEEL_EDGE,
-            _ => BODY,
-        }
-    };
+    // Six "pixels" per cell (2 wide, 3 tall) via sextant characters; each
+    // pixel averages 3x3 samples, and each cell splits its pixels into the
+    // two colour groups that fit them best, so edges come out anti-aliased.
+    const SS: usize = 3;
+    let body = split(BODY);
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
-            let mut px = [0u32; 6];
+            let mut px = [[0f64; 3]; 6];
             for (i, p) in px.iter_mut().enumerate() {
-                let sx = x as f64 + if i % 2 == 0 { 0.25 } else { 0.75 };
-                let sy = y as f64 + (i / 2) as f64 / 3.0 + 1.0 / 6.0;
-                *p = color(sx, sy);
+                let mut acc = [0f64; 3];
+                for sy in 0..SS {
+                    for sx in 0..SS {
+                        let fx =
+                            x as f64 + (i % 2) as f64 * 0.5 + (sx as f64 + 0.5) / (2 * SS) as f64;
+                        let fy =
+                            y as f64 + (i / 2) as f64 / 3.0 + (sy as f64 + 0.5) / (3 * SS) as f64;
+                        let (dx, dy) = ((fx - cx) * cw, (fy - cy) * ch);
+                        let c = wheel_shade((dx * dx + dy * dy).sqrt() / r);
+                        for k in 0..3 {
+                            acc[k] += c[k];
+                        }
+                    }
+                }
+                *p = acc.map(|v| v / (SS * SS) as f64);
             }
-            if px.iter().all(|&c| c == BODY) {
+            let near = |a: [f64; 3], b: [f64; 3]| (0..3).all(|k| (a[k] - b[k]).abs() < 0.5);
+            if px.iter().all(|&p| near(p, body)) {
                 continue;
             }
-            // The cell's two most common colors; each pixel takes the
-            // nearer (here: equal, or else the background).
-            let mut counts: Vec<(u32, usize)> = Vec::new();
-            for &c in &px {
-                match counts.iter_mut().find(|(k, _)| *k == c) {
-                    Some((_, n)) => *n += 1,
-                    None => counts.push((c, 1)),
+            // Order by brightness and try every cut into two groups.
+            let lum = |c: [f64; 3]| c[0] * 0.299 + c[1] * 0.587 + c[2] * 0.114;
+            let mut order: Vec<usize> = (0..6).collect();
+            order.sort_by(|&a, &b| lum(px[a]).total_cmp(&lum(px[b])));
+            let mean = |ix: &[usize]| {
+                let mut m = [0f64; 3];
+                for &i in ix {
+                    for k in 0..3 {
+                        m[k] += px[i][k] / ix.len() as f64;
+                    }
+                }
+                m
+            };
+            let err = |ix: &[usize], m: [f64; 3]| {
+                ix.iter()
+                    .map(|&i| (0..3).map(|k| (px[i][k] - m[k]).powi(2)).sum::<f64>())
+                    .sum::<f64>()
+            };
+            let mut best = (f64::MAX, 6);
+            for cut in 1..=6 {
+                let (a, b) = order.split_at(cut);
+                let e = err(a, mean(a)) + if b.is_empty() { 0.0 } else { err(b, mean(b)) };
+                if e < best.0 - 1e-6 {
+                    best = (e, cut);
                 }
             }
-            counts.sort_by(|a, b| b.1.cmp(&a.1));
-            let bg = counts[0].0;
-            let fg = counts.get(1).map(|c| c.0).unwrap_or(bg);
-            let bits = px.iter().enumerate().fold(0u8, |acc, (i, &c)| {
-                if c == fg && fg != bg {
-                    acc | 1 << i
-                } else {
-                    acc
-                }
-            });
+            let (dark, light) = order.split_at(best.1);
+            let bits = light.iter().fold(0u8, |acc, &i| acc | 1 << i);
+            let fg = if light.is_empty() {
+                mean(dark)
+            } else {
+                mean(light)
+            };
             buf[(x, y)]
                 .set_symbol(super::paint::sextant(bits))
-                .set_fg(rgb(fg))
-                .set_bg(rgb(bg));
+                .set_fg(to_color(fg))
+                .set_bg(to_color(mean(dark)));
         }
     }
 }
@@ -300,7 +357,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     };
     let icon = match s.status {
         Status::Playing => "▶",
-        Status::Paused => "❚❚",
+        Status::Paused => "⏸",
         _ => " ",
     };
     text(buf, scr.x + 1, scr.y, 2, icon, ink(INK));
@@ -357,11 +414,22 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
                 );
             }
             y += 2;
-            center(buf, y, &t.name, ink(INK).add_modifier(Modifier::BOLD));
+            let by = content.bottom().saturating_sub(2);
+            // Two lines for a long title when there's room for the album too.
+            let room = by.saturating_sub(y + 3) as usize;
+            let name = wrap(&t.name, content.width as usize - 2, room.clamp(1, 2));
+            for (i, line) in name.iter().enumerate() {
+                center(
+                    buf,
+                    y + i as u16,
+                    line,
+                    ink(INK).add_modifier(Modifier::BOLD),
+                );
+            }
+            let y = y + name.len().saturating_sub(1) as u16;
             center(buf, y + 1, &t.artists.join(", "), ink(INK));
             center(buf, y + 2, &t.album, ink(INK_DIM));
             let pos = s.position_now_ms();
-            let by = content.bottom().saturating_sub(2);
             let bar = Rect {
                 x: content.x + 2,
                 y: by,
@@ -437,7 +505,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     label(buf, wcx, wcy - ry * 0.72, "MENU");
     label(buf, wcx - rx * 0.72, wcy, "⏮");
     label(buf, wcx + rx * 0.72, wcy, "⏭");
-    label(buf, wcx, wcy + ry * 0.66, "▶❚❚");
+    label(buf, wcx, wcy + ry * 0.66, "▶⏸");
     app.ipod.wheel = Wheel {
         cx: wcx,
         cy: wcy,

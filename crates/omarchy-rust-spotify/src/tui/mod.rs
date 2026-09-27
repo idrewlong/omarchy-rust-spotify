@@ -251,7 +251,7 @@ fn load_settings() -> Settings {
         muted: from_theme("muted", Color::DarkGray),
     };
 
-    let (file, problem) = match std::fs::read_to_string(tui_path()) {
+    let (mut file, problem) = match std::fs::read_to_string(tui_path()) {
         Ok(text) => match toml::from_str::<TuiFile>(&text) {
             Ok(f) => (f, None),
             Err(e) => (
@@ -270,6 +270,9 @@ fn load_settings() -> Settings {
     set(&mut palette.fg, &file.colors.foreground);
     set(&mut palette.bg, &file.colors.background);
     set(&mut palette.muted, &file.colors.muted);
+    if let Some(skin) = SKIN_OVERRIDE.get() {
+        file.layout.skin = *skin;
+    }
     Settings {
         palette,
         layout: file.layout,
@@ -559,7 +562,29 @@ pub fn debug_term() -> Result<()> {
     Ok(())
 }
 
-pub fn run() -> Result<()> {
+/// `tui --skin <name>`: this window's skin, whatever tui.toml says.
+static SKIN_OVERRIDE: std::sync::OnceLock<Skin> = std::sync::OnceLock::new();
+/// `tui --viz mirror`: start the visualizer in its mirror style.
+static VIZ_MIRROR: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+
+pub fn run(args: &[String]) -> Result<()> {
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--skin" => {
+                let name = it
+                    .next()
+                    .ok_or_else(|| anyhow::anyhow!("--skin needs a name"))?;
+                let skin: Skin = serde_json::from_value(serde_json::Value::String(name.clone()))
+                    .map_err(|_| anyhow::anyhow!("unknown skin: {name}"))?;
+                let _ = SKIN_OVERRIDE.set(skin);
+            }
+            "--viz" => {
+                let _ = VIZ_MIRROR.set(it.next().map(String::as_str) == Some("mirror"));
+            }
+            other => anyhow::bail!("tui: unknown option {other}"),
+        }
+    }
     // Where we were started from, before a new build replaces it (after that
     // /proc/self/exe reads "(deleted)").
     let exe = std::env::current_exe()?;
@@ -704,6 +729,9 @@ fn event_loop(
         ipod: Default::default(),
         viz: Default::default(),
     };
+    if VIZ_MIRROR.get() == Some(&true) {
+        app.viz.style = visualizer::Style_::Mirror;
+    }
     let mut watched = (mtime(&theme_path()), mtime(&tui_path()));
     let mut last_check = std::time::Instant::now();
     let mut last_playlists = std::time::Instant::now();

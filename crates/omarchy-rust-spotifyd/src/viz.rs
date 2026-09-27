@@ -58,15 +58,27 @@ impl Drop for Watch {
     }
 }
 
-/// Band edges, log-spaced from 40 Hz to 16 kHz, as FFT bin indices.
+/// Band edges, log-spaced from 50 Hz to 16 kHz, as FFT bin indices. At the
+/// low end a log step is narrower than one bin, so every band gets at least
+/// one bin of its own (otherwise neighbours repeat the same bin and the
+/// bass shows up as wide flat steps).
 fn band_edges() -> Vec<usize> {
-    let (lo, hi) = (40f64, 16_000f64);
-    (0..=BANDS)
-        .map(|i| {
-            let f = lo * (hi / lo).powf(i as f64 / BANDS as f64);
-            ((f / RATE * WINDOW as f64).round() as usize).clamp(1, WINDOW / 2)
-        })
-        .collect()
+    let (lo, hi) = (50f64, 16_000f64);
+    let mut edges: Vec<usize> = Vec::with_capacity(BANDS + 1);
+    for i in 0..=BANDS {
+        let f = lo * (hi / lo).powf(i as f64 / BANDS as f64);
+        let bin = (f / RATE * WINDOW as f64).round() as usize;
+        let min = edges.last().map_or(1, |&e| e + 1);
+        edges.push(bin.max(min).min(WINDOW / 2));
+    }
+    edges
+}
+
+/// Music falls off ~3 dB per octave (pink-ish), so without a tilt the
+/// treble never leaves the floor. Boost each band by its octaves above 50 Hz.
+fn tilt_db(band: usize) -> f64 {
+    let octaves = (16_000f64 / 50.0).log2() * band as f64 / BANDS as f64;
+    3.0 * octaves
 }
 
 pub async fn run(tap: Arc<Tap>, out: broadcast::Sender<Arc<Vec<u8>>>) {
@@ -116,12 +128,13 @@ pub async fn run(tap: Arc<Tap>, out: broadcast::Sender<Arc<Vec<u8>>>) {
         }
         let bands: Vec<u8> = edges
             .windows(2)
-            .map(|w| {
+            .enumerate()
+            .map(|(i, w)| {
                 let (a, b) = (w[0], w[1].max(w[0] + 1));
                 let peak = spectrum[a..b].iter().map(|c| c.norm()).fold(0f32, f32::max);
                 // Normalize by the window's gain, then to 0..255 over the dB range.
                 let mag = peak as f64 / (WINDOW as f64 / 4.0);
-                let db = 20.0 * mag.max(1e-9).log10();
+                let db = 20.0 * mag.max(1e-9).log10() + tilt_db(i);
                 (((db - FLOOR_DB) / -FLOOR_DB).clamp(0.0, 1.0) * 255.0) as u8
             })
             .collect();
@@ -137,7 +150,7 @@ mod tests {
     fn edges_are_increasing_and_in_range() {
         let e = band_edges();
         assert_eq!(e.len(), BANDS + 1);
-        assert!(e.windows(2).all(|w| w[0] <= w[1]));
+        assert!(e.windows(2).all(|w| w[0] < w[1]));
         assert!(*e.last().unwrap() <= WINDOW / 2);
     }
 }

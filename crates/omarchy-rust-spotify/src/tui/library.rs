@@ -727,6 +727,30 @@ pub(super) fn draw_sidebar(f: &mut Frame, b: &mut Browser, rect: Rect, st: &List
 }
 
 /// The open list (or search prompt, loading, error) inside `rect`.
+/// Widths of a song row's columns, for skins that draw column headers.
+pub(super) struct Columns {
+    pub num_w: usize,
+    pub mark_w: usize,
+    pub name_w: usize,
+    pub sub_w: usize,
+    pub time_w: usize,
+}
+
+pub(super) fn columns(width: u16, st: &ListStyle) -> Columns {
+    let num_w = if st.numbered { 5 } else { 0 };
+    let mark_w = st.playing_mark.chars().count();
+    let time_w = 6;
+    let avail = (width as usize).saturating_sub(num_w + mark_w + time_w + 2);
+    let sub_w = avail * 2 / 5;
+    Columns {
+        num_w,
+        mark_w,
+        name_w: avail.saturating_sub(sub_w + 1),
+        sub_w,
+        time_w,
+    }
+}
+
 pub(super) fn draw_list(
     f: &mut Frame,
     b: &mut Browser,
@@ -772,13 +796,14 @@ pub(super) fn draw_list(
     }
     let h = rect.height as usize;
     v.scroll = scrolled(v.sel, v.scroll, h);
+    let Columns {
+        num_w: _,
+        mark_w,
+        name_w,
+        sub_w,
+        time_w,
+    } = columns(rect.width, st);
     let w = rect.width as usize;
-    let num_w = if st.numbered { 5 } else { 0 };
-    let mark_w = st.playing_mark.chars().count();
-    let time_w = 6;
-    let avail = w.saturating_sub(num_w + mark_w + time_w + 2);
-    let sub_w = avail * 2 / 5;
-    let name_w = avail.saturating_sub(sub_w + 1);
     for (row, i) in (v.scroll..rows.len()).enumerate().take(h) {
         let r = Rect {
             x: rect.x,
