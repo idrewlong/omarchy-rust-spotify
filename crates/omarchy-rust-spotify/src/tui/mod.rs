@@ -41,6 +41,7 @@ mod itunes;
 mod library;
 mod lyrics;
 mod paint;
+mod spotify;
 mod visualizer;
 mod winamp;
 mod wmp;
@@ -73,6 +74,8 @@ enum Skin {
     Wmp2000,
     /// The lyrics of what's playing, following the song.
     Lyrics,
+    /// After today's Spotify desktop app.
+    Spotify,
 }
 
 impl Skin {
@@ -81,15 +84,22 @@ impl Skin {
     fn uses_browser(self) -> bool {
         matches!(
             self,
-            Skin::Library | Skin::Winamp | Skin::Itunes | Skin::Ipod | Skin::Zune | Skin::Wmp11
+            Skin::Library
+                | Skin::Spotify
+                | Skin::Winamp
+                | Skin::Itunes
+                | Skin::Ipod
+                | Skin::Zune
+                | Skin::Wmp11
         )
     }
 
-    const ORDER: [Skin; 10] = [
+    const ORDER: [Skin; 11] = [
         Skin::Library,
         Skin::Classic,
-        Skin::Wmp2000,
         Skin::Lyrics,
+        Skin::Spotify,
+        Skin::Wmp2000,
         Skin::Winamp,
         Skin::Itunes,
         Skin::Ipod,
@@ -552,6 +562,7 @@ fn draw(f: &mut Frame, app: &mut App) {
         Skin::Classic => classic::draw(f, app),
         Skin::Wmp2000 => wmp::draw(f, app),
         Skin::Lyrics => lyrics::draw(f, app),
+        Skin::Spotify => spotify::draw(f, app),
     }
     if app.help {
         help::draw(f, app);
@@ -1207,6 +1218,7 @@ pub(super) mod tests {
             Skin::Classic,
             Skin::Wmp2000,
             Skin::Lyrics,
+            Skin::Spotify,
         ] {
             for playing in [false, true] {
                 for (w, h) in [

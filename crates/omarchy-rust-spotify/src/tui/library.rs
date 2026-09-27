@@ -633,6 +633,13 @@ impl Browser {
         }
     }
 
+    /// The open list's own title (no count) and what it plays within,
+    /// for skins with a big play button (Spotify's).
+    pub(super) fn open_list(&self) -> Option<(String, Option<String>)> {
+        let v = self.view.as_ref()?;
+        Some((v.title.clone(), v.context.clone()))
+    }
+
     pub(super) fn sidebar_focused(&self) -> bool {
         self.focus == Focus::Sidebar && !self.searching
     }

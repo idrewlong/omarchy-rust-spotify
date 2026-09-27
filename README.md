@@ -2,8 +2,9 @@
 
 **The Spotify player you can skin**, for [Omarchy](https://omarchy.org).
 A music icon in your bar with a mini player on hover, and a fast terminal
-player with nine looks (your Omarchy theme, Winamp, iTunes, a click-wheel
-iPod, Zune, Windows Media Player 11 and 2000) plus real visualizers, from
+player with eleven looks (your Omarchy theme, today's Spotify app, lyrics,
+Winamp, iTunes, a click-wheel iPod, Zune, Windows Media Player 11 and 2000)
+plus real visualizers, from
 WMP-style bars and fire to full-resolution GPU shaders.
 
 Built in Rust on [librespot](https://github.com/librespot-org/librespot):
