@@ -34,6 +34,7 @@ use ratatui_image::{
 use serde::Deserialize;
 
 mod classic;
+mod demo;
 mod gpu;
 mod help;
 mod ipod;
@@ -689,6 +690,8 @@ fn open_gpu_viz() {
 static SKIN_OVERRIDE: std::sync::OnceLock<Skin> = std::sync::OnceLock::new();
 /// `tui --viz <style>`: start the visualizer in this style.
 static VIZ_OVERRIDE: std::sync::OnceLock<visualizer::Style_> = std::sync::OnceLock::new();
+/// `tui --demo`: made-up music, no daemon (see demo.rs).
+static DEMO: std::sync::OnceLock<()> = std::sync::OnceLock::new();
 /// `tui --viz gpu:<preset>`: start on that GPU preset.
 static VIZ_GPU_OVERRIDE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
 
@@ -703,6 +706,9 @@ pub fn run(args: &[String]) -> Result<()> {
                 let skin: Skin = serde_json::from_value(serde_json::Value::String(name.clone()))
                     .map_err(|_| anyhow::anyhow!("unknown skin: {name}"))?;
                 let _ = SKIN_OVERRIDE.set(skin);
+            }
+            "--demo" => {
+                let _ = DEMO.set(());
             }
             "--viz" => {
                 let name = it
@@ -872,10 +878,11 @@ fn event_loop(
             }
         });
     }
-    let mut writer = connect(tx.clone()).ok();
+    let demo = DEMO.get().is_some();
+    let mut writer = if demo { None } else { connect(tx.clone()).ok() };
     let mut app = App {
         state: PlayerState::default(),
-        connected: writer.is_some(),
+        connected: writer.is_some() || demo,
         settings: load_settings(),
         login_requested: false,
         login_page: None,
@@ -894,6 +901,10 @@ fn event_loop(
         .get()
         .copied()
         .unwrap_or(app.settings.layout.viz);
+    if demo {
+        demo::setup(&mut app);
+    }
+    let demo_start = std::time::Instant::now();
     let mut watched = (mtime(&theme_path()), mtime(&tui_path()));
     let mut last_check = std::time::Instant::now();
     let mut last_playlists = std::time::Instant::now();
@@ -944,6 +955,9 @@ fn event_loop(
             viz_subscribed = want_viz;
         }
         if want_viz {
+            if demo {
+                demo::viz_frame(&mut app, demo_start);
+            }
             app.viz.step();
         }
         let wait = if want_viz && (app.viz.animating() || app.viz.gpu.is_some()) {
@@ -1046,7 +1060,7 @@ fn event_loop(
             app.browser
                 .start(app.settings.layout.playlist_order, &mut out);
             // Keep "Recents" current (plays on other devices, too).
-            if last_playlists.elapsed() >= Duration::from_secs(300) {
+            if !demo && last_playlists.elapsed() >= Duration::from_secs(300) {
                 last_playlists = std::time::Instant::now();
                 app.browser
                     .refresh_playlists(app.settings.layout.playlist_order, &mut out);

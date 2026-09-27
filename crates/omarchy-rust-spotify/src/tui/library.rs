@@ -633,6 +633,38 @@ impl Browser {
         }
     }
 
+    /// A browser already filled in: the demo's library (no requests).
+    pub(super) fn demo(playlists: Vec<Item>, tracks: Vec<Item>, liked_total: u32) -> Self {
+        let n = tracks.len();
+        Browser {
+            started: true,
+            focus: Focus::List,
+            playlists,
+            sidebar_sel: 1,
+            view: Some(View {
+                title: "Liked Songs".into(),
+                req: Request::Tracks {
+                    of: "liked".into(),
+                    offset: 0,
+                },
+                context: Some("liked".into()),
+                sections: vec![Section {
+                    title: String::new(),
+                    items: tracks,
+                    total: liked_total.max(n as u32),
+                    offset: 0,
+                }],
+                loading: false,
+                loading_more: false,
+                error: None,
+                sel: 2,
+                scroll: 0,
+                id: 0,
+            }),
+            ..Default::default()
+        }
+    }
+
     /// The open list's own title (no count) and what it plays within,
     /// for skins with a big play button (Spotify's).
     pub(super) fn open_list(&self) -> Option<(String, Option<String>)> {

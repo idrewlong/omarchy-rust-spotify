@@ -12,6 +12,8 @@ no official Spotify app, no spotifyd, no cava, no Chromium. About 27 MB for
 the background player and 20 MB for the player window. Apple Silicon
 (Asahi) and x86_64.
 
+![The Spotify skin, Winamp, the iPod, Windows Media Player 2000 and two visualizers (demo mode's made-up music)](preview.png)
+
 ## Install
 
 ```sh
@@ -64,6 +66,12 @@ Requires Spotify Premium (Spotify's rule for third-party playback).
   <client-id>`. Optional: without it your playlists, Liked Songs, albums and
   song search come through the player's own Spotify connection. With it,
   the rate limit is yours alone, not shared with every other user.
+
+## Try it without an account
+
+`omarchy-rust-spotify tui --demo` opens the player with made-up music (no
+daemon, no sign-in): press `t` to go through every skin and visualizer.
+The preview above is demo mode.
 
 ## Update
 

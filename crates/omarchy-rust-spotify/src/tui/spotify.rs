@@ -72,7 +72,10 @@ fn disc(
         y + 1,
         1,
         glyph,
-        Style::new().fg(rgb(BLACK)).bg(rgb(color)).add_modifier(Modifier::BOLD),
+        Style::new()
+            .fg(rgb(BLACK))
+            .bg(rgb(color))
+            .add_modifier(Modifier::BOLD),
     );
     Rect {
         x,
@@ -99,7 +102,10 @@ fn pill(buf: &mut Buffer, x: u16, y: u16, label: &str, bg: u32, fg: u32, under: 
         y,
         w - 2,
         label,
-        Style::new().fg(rgb(fg)).bg(rgb(bg)).add_modifier(Modifier::BOLD),
+        Style::new()
+            .fg(rgb(fg))
+            .bg(rgb(bg))
+            .add_modifier(Modifier::BOLD),
     );
     buf[(x + w - 1, y)].set_symbol(" ").set_bg(rgb(bg));
     w
@@ -181,7 +187,15 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         "▥  Your Library",
         on_panel(WHITE).add_modifier(Modifier::BOLD),
     );
-    pill(buf, left.x + 2, left.y + 3, "Playlists", WHITE, BLACK, rgb(PANEL));
+    pill(
+        buf,
+        left.x + 2,
+        left.y + 3,
+        "Playlists",
+        WHITE,
+        BLACK,
+        rgb(PANEL),
+    );
 
     // The open list's header: a colour washing down into the panel.
     let (title, context) = app
@@ -194,7 +208,9 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     let hue = if context.as_deref() == Some("liked") {
         HEADERS[0]
     } else {
-        let h = title.bytes().fold(7u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32));
+        let h = title
+            .bytes()
+            .fold(7u32, |a, b| a.wrapping_mul(31).wrapping_add(b as u32));
         HEADERS[(h as usize) % HEADERS.len()]
     };
     for i in 0..head_h {
@@ -222,7 +238,14 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         text(buf, tx, main.y + 2, tw, kind, hs(2));
     }
     let ty = main.y + head_h - 3;
-    text(buf, tx, ty, tw, &title, hs(head_h - 3).add_modifier(Modifier::BOLD));
+    text(
+        buf,
+        tx,
+        ty,
+        tw,
+        &title,
+        hs(head_h - 3).add_modifier(Modifier::BOLD),
+    );
     let count = if total > 0 {
         format!("{total} songs")
     } else {
@@ -299,8 +322,22 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
     let sub_x = name_x + cols.name_w as u16 + 1;
     let time_x = sub_x + cols.sub_w as u16 + 1 + cols.time_w as u16 - 2;
     text(buf, list.x + 1, list.y, 3, "#", on_panel(GREY));
-    text(buf, name_x, list.y, cols.name_w as u16, "Title", on_panel(GREY));
-    text(buf, sub_x, list.y, cols.sub_w as u16, "Artist", on_panel(GREY));
+    text(
+        buf,
+        name_x,
+        list.y,
+        cols.name_w as u16,
+        "Title",
+        on_panel(GREY),
+    );
+    text(
+        buf,
+        sub_x,
+        list.y,
+        cols.sub_w as u16,
+        "Artist",
+        on_panel(GREY),
+    );
     text(buf, time_x, list.y, 2, "◷", on_panel(GREY));
     for x in list.left()..list.right() {
         buf[(x, list.y + 1)]
@@ -340,7 +377,14 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
                 &t.name,
                 on_panel(WHITE).add_modifier(Modifier::BOLD),
             );
-            text(buf, right.x + 2, ny + 1, rw - 4, &t.artists.join(", "), on_panel(GREY));
+            text(
+                buf,
+                right.x + 2,
+                ny + 1,
+                rw - 4,
+                &t.artists.join(", "),
+                on_panel(GREY),
+            );
         }
     }
 
@@ -421,12 +465,21 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         Repeat::Track => Repeat::Off,
     };
     for (dx, glyph, lit, hit) in [
-        (-12i32, "⤮", s.shuffle, Hit::Cmd(Command::Shuffle { on: !s.shuffle })),
+        (
+            -12i32,
+            "⤮",
+            s.shuffle,
+            Hit::Cmd(Command::Shuffle { on: !s.shuffle }),
+        ),
         (-6, "⏮", false, Hit::Cmd(Command::Prev)),
         (6, "⏭", false, Hit::Cmd(Command::Next)),
         (
             12,
-            if s.repeat == Repeat::Track { "↻¹" } else { "↻" },
+            if s.repeat == Repeat::Track {
+                "↻¹"
+            } else {
+                "↻"
+            },
             s.repeat != Repeat::Off,
             Hit::Cmd(Command::Repeat { mode: next_repeat }),
         ),
