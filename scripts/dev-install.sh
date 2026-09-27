@@ -34,6 +34,27 @@ LUA
   hyprctl reload >/dev/null
 fi
 
+# The Omarchy bar widget, linked so shell edits here apply live. It takes
+# the old v2 plugin's place in the bar the first time (that plugin stays
+# installed, just out of the bar).
+plugin_id=io.github.idrewlong.omarchy-rust-spotify
+mkdir -p ~/.config/omarchy/plugins
+ln -sfn "$PWD/omarchy/plugin" ~/.config/omarchy/plugins/$plugin_id
+# First install: take the old v2 widget's place in the bar if it's there,
+# else the center. After that, leave the user's placement alone.
+shell_json=~/.config/omarchy/shell.json
+section=""
+if [[ -f $shell_json ]] && ! jq -e --arg id "$plugin_id" '[.bar.layout[][]? | select(.id == $id)] | length > 0' "$shell_json" >/dev/null; then
+  section=center
+  cp "$shell_json" "$shell_json.bak-rust-spotify"
+  if jq -e '[.bar.layout[][]? | select(.id == "io.github.idrewlong.ncspot-keepalive")] | length > 0' "$shell_json" >/dev/null; then
+    jq --arg id "$plugin_id" '.bar.layout |= map_values(map(if .id == "io.github.idrewlong.ncspot-keepalive" then {id: $id} else . end))' \
+      "$shell_json.bak-rust-spotify" > "$shell_json"
+    section=""
+  fi
+fi
+omarchy plugin enable "$plugin_id" ${section:+--section "$section"} >/dev/null 2>&1 || true
+
 systemctl --user daemon-reload
 systemctl --user enable --quiet omarchy-rust-spotifyd.service
 systemctl --user restart omarchy-rust-spotifyd.service

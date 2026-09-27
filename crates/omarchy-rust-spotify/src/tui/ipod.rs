@@ -175,29 +175,53 @@ pub(super) fn on_mouse(
 }
 
 fn wheel(buf: &mut Buffer, area: Rect, cx: f64, cy: f64, r: f64, cw: f64, ch: f64) {
-    // Two vertical "pixels" per cell via half blocks.
-    let color = |x: u16, sub: f64| {
-        let dx = (x as f64 + 0.5 - cx) * cw;
-        let dy = (sub - cy) * ch;
+    // Six "pixels" per cell (2 wide, 3 tall) via sextant characters.
+    let color = |x: f64, y: f64| {
+        let dx = (x - cx) * cw;
+        let dy = (y - cy) * ch;
         let d = (dx * dx + dy * dy).sqrt() / r;
         match d {
-            d if d <= 0.37 => Some(CENTER),
-            d if d <= 0.41 => Some(WHEEL_EDGE),
-            d if d <= 0.95 => Some(WHEEL),
-            d if d <= 1.0 => Some(WHEEL_EDGE),
-            _ => None,
+            d if d <= 0.37 => CENTER,
+            d if d <= 0.40 => WHEEL_EDGE,
+            d if d <= 0.96 => WHEEL,
+            d if d <= 1.0 => WHEEL_EDGE,
+            _ => BODY,
         }
     };
     for y in area.top()..area.bottom() {
         for x in area.left()..area.right() {
-            let top = color(x, y as f64 + 0.25);
-            let bottom = color(x, y as f64 + 0.75);
-            if top.is_none() && bottom.is_none() {
+            let mut px = [0u32; 6];
+            for (i, p) in px.iter_mut().enumerate() {
+                let sx = x as f64 + if i % 2 == 0 { 0.25 } else { 0.75 };
+                let sy = y as f64 + (i / 2) as f64 / 3.0 + 1.0 / 6.0;
+                *p = color(sx, sy);
+            }
+            if px.iter().all(|&c| c == BODY) {
                 continue;
             }
-            let t = rgb(top.unwrap_or(BODY));
-            let b = rgb(bottom.unwrap_or(BODY));
-            buf[(x, y)].set_symbol("▀").set_fg(t).set_bg(b);
+            // The cell's two most common colors; each pixel takes the
+            // nearer (here: equal, or else the background).
+            let mut counts: Vec<(u32, usize)> = Vec::new();
+            for &c in &px {
+                match counts.iter_mut().find(|(k, _)| *k == c) {
+                    Some((_, n)) => *n += 1,
+                    None => counts.push((c, 1)),
+                }
+            }
+            counts.sort_by(|a, b| b.1.cmp(&a.1));
+            let bg = counts[0].0;
+            let fg = counts.get(1).map(|c| c.0).unwrap_or(bg);
+            let bits = px.iter().enumerate().fold(0u8, |acc, (i, &c)| {
+                if c == fg && fg != bg {
+                    acc | 1 << i
+                } else {
+                    acc
+                }
+            });
+            buf[(x, y)]
+                .set_symbol(super::paint::sextant(bits))
+                .set_fg(rgb(fg))
+                .set_bg(rgb(bg));
         }
     }
 }

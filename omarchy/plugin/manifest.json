@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.idrewlong.omarchy-rust-spotify",
+  "name": "omarchy-rust-spotify",
+  "version": "0.1.0",
+  "author": "idrewlong",
+  "license": "MIT",
+  "description": "Music icon for omarchy-rust-spotify: hover for a mini player (cover, track, shuffle/previous/play-pause/next/repeat), click to open the full player. Talks to the daemon's socket, so updates are instant.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Spotify (Rust)",
+    "description": "Music icon with a hover mini player; click to open the player",
+    "category": "Media",
+    "defaultSection": "center",
+    "allowMultiple": false
+  }
+}

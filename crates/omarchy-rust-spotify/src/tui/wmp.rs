@@ -34,28 +34,15 @@ fn fill(buf: &mut Buffer, r: Rect, bg: Color) {
 
 /// A Win32 bevel around `r`: light top-left and dark bottom-right when
 /// raised, the other way round when sunken.
+/// Win32 bevel (light top-left, dark bottom-right when raised), in crisp
+/// box-drawing lines; see paint::bevel.
 fn bevel(buf: &mut Buffer, r: Rect, raised: bool, face: Color) {
-    if r.width < 2 || r.height < 2 {
-        return;
-    }
     let (tl, br) = if raised {
         (HILITE, DARK)
     } else {
         (SHADOW, HILITE)
     };
-    let (x0, y0, x1, y1) = (r.left(), r.top(), r.right() - 1, r.bottom() - 1);
-    for x in x0..=x1 {
-        buf[(x, y0)].set_symbol("▔").set_fg(tl).set_bg(face);
-        buf[(x, y1)].set_symbol("▁").set_fg(br).set_bg(face);
-    }
-    for y in y0..=y1 {
-        buf[(x0, y)].set_symbol("▏").set_fg(tl).set_bg(face);
-        buf[(x1, y)].set_symbol("▕").set_fg(br).set_bg(face);
-    }
-    buf[(x0, y0)].set_symbol("▛").set_fg(tl).set_bg(face);
-    buf[(x1, y1)].set_symbol("▟").set_fg(br).set_bg(face);
-    buf[(x1, y0)].set_symbol("▜").set_fg(tl).set_bg(face);
-    buf[(x0, y1)].set_symbol("▙").set_fg(tl).set_bg(face);
+    super::paint::bevel(buf, r, face, tl, br);
 }
 
 fn text(buf: &mut Buffer, x: u16, y: u16, max: u16, s: &str, style: Style) {
