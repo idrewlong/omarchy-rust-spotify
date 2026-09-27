@@ -239,7 +239,7 @@ mod tests {
         // A noisy 1280x720 frame, the worst case for runs.
         let (w, h) = (1280, 720);
         let px: Vec<u8> = (0..w * h * 4)
-            .map(|i| (i * 2654435761usize >> 7) as u8)
+            .map(|i| ((i * 2654435761usize) >> 7) as u8)
             .collect();
         let mut enc = Encoder::default();
         let mut out = Vec::new();

@@ -758,9 +758,17 @@ impl Library {
             }
 
             Request::Playlists { order } => {
-                let mut items = match self.web_playlists().await {
-                    Err(e) if needs_app(&e) => self.rootlist().await?,
-                    other => other?,
+                // The rootlist first: it's the whole library and quick.
+                // Spotify's developer rules hide the playlists Spotify owns
+                // (Daily Mixes, Radios, editorial ones) from the Web API, a
+                // third of the list in testing, so it's only the fallback.
+                let mut items = match self.rootlist().await {
+                    Ok(items) if !items.is_empty() => items,
+                    Ok(_) => self.web_playlists().await.unwrap_or_default(),
+                    Err(e) => {
+                        tracing::warn!("rootlist: {e:#}; asking the Web API");
+                        self.web_playlists().await?
+                    }
                 };
                 match order {
                     PlaylistOrder::Library => {}

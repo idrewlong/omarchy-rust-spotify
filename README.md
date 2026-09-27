@@ -25,7 +25,10 @@ the install (prebuilt binaries for your machine, checked against the
 release's checksums; built from source if there's no release for it), then
 your browser opens to sign in to Spotify. That's it.
 
-Requires Spotify Premium (Spotify's rule for third-party playback).
+**Requirements:** Omarchy 4 and Spotify Premium (Spotify's rule for
+third-party playback). Nothing else to install: audio goes through
+PipeWire's PulseAudio support, which Omarchy has. Building from source (only
+when there's no release for your CPU) needs Rust.
 
 ## Use it
 

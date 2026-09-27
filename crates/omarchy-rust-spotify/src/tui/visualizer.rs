@@ -466,7 +466,10 @@ impl Viz {
     /// random scene every eight beats (or ten seconds without beats).
     fn alchemy(&mut self, c: &mut Canvas) {
         self.scene_age += 1;
-        if self.scene == [0.0; 6] || (self.beat && self.beats % 8 == 0) || self.scene_age > 300 {
+        if self.scene == [0.0; 6]
+            || (self.beat && self.beats.is_multiple_of(8))
+            || self.scene_age > 300
+        {
             let next: [f32; 6] = std::array::from_fn(|_| 0.3 + self.rand() * 1.2);
             if self.scene == [0.0; 6] {
                 self.scene = next;
@@ -508,7 +511,7 @@ impl Viz {
         }
         if self.beat {
             self.hue += 60.0;
-            if self.beats % 4 == 0 {
+            if self.beats.is_multiple_of(4) {
                 self.spin = -self.spin;
             }
         }

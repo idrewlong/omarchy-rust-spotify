@@ -1,8 +1,10 @@
 # Rust rebuild: implementation plan
 
-Status: proposal, 2026-09-26. The repository (this one,
-github.com/idrewlong/omarchy-rust-spotify) exists; nothing else in the plan has
-been built yet. The previous build (spotify-player daemon + QML mini player)
+Status: the original plan (2026-09-26), kept for its reasoning. Most of it
+is built; see the README for what exists. Superseded where it differs: the
+app installs as an Omarchy plugin with release binaries from GitHub
+(scripts/install.sh), not as a pacman package, and the player is a terminal
+UI with skins rather than a QML window. The previous build (spotify-player daemon + QML mini player)
 stays at github.com/idrewlong/omarchy-ncspot-arm.
 
 Name: **omarchy-rust-spotify**, chosen by the project owner (the plan was

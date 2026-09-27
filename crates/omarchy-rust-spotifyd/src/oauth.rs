@@ -75,7 +75,7 @@ pub struct Pending {
 pub async fn start(client_id: &str, scopes: &[&str]) -> Result<Pending> {
     let listener = TcpListener::bind(LISTEN_ADDR)
         .await
-        .with_context(|| format!("port 8989 is in use (another sign-in running?)"))?;
+        .with_context(|| "port 8989 is in use (another sign-in running?)".to_string())?;
     let verifier = random_token(64);
     let challenge = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
     let state = random_token(16);

@@ -19,7 +19,7 @@ impl Histogram {
     pub fn record(&self, ns: u64) {
         let mut s = self.samples.lock().unwrap();
         s.push(ns);
-        if s.len() % 50 == 0 {
+        if s.len().is_multiple_of(50) {
             let (p50, p99, max) = summarize(&s);
             tracing::info!(
                 "{} latency over {} events: p50 {:.2} ms, p99 {:.2} ms, max {:.2} ms",

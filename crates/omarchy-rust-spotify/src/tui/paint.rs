@@ -171,7 +171,7 @@ pub fn big_digits(
             ':' => DIGITS[10],
             _ => continue,
         };
-        let w = if ch == ':' { 3 } else { 3 };
+        let w = 3;
         for col in 0..w {
             for row in 0..3u16 {
                 let px = |r: usize| r < 5 && glyph[r] & (0b100 >> col) != 0;

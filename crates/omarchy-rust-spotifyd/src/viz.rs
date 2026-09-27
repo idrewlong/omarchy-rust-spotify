@@ -41,7 +41,7 @@ impl Tap {
             return;
         }
         let mut buf = self.samples.lock().unwrap();
-        for pair in interleaved.chunks_exact(2) {
+        for pair in interleaved.as_chunks::<2>().0 {
             buf.push_back(((pair[0] + pair[1]) * 0.5) as f32);
         }
         let excess = buf.len().saturating_sub(WINDOW * 2);
