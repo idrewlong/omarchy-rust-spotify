@@ -566,6 +566,22 @@ pub fn debug_term() -> Result<()> {
     Ok(())
 }
 
+/// Starts omarchy-rust-spotify-viz (installed beside this binary), detached
+/// so it outlives the player.
+fn open_gpu_viz() {
+    use std::os::unix::process::CommandExt;
+    let beside = std::env::current_exe()
+        .ok()
+        .and_then(|p| p.parent().map(|d| d.join("omarchy-rust-spotify-viz")))
+        .filter(|p| p.exists());
+    let _ = std::process::Command::new(beside.unwrap_or_else(|| "omarchy-rust-spotify-viz".into()))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .process_group(0)
+        .spawn();
+}
+
 /// `tui --skin <name>`: this window's skin, whatever tui.toml says.
 static SKIN_OVERRIDE: std::sync::OnceLock<Skin> = std::sync::OnceLock::new();
 /// `tui --viz <style>`: start the visualizer in this style.
@@ -664,6 +680,11 @@ fn key_command(app: &mut App, code: KeyCode, mods: KeyModifiers) -> Option<Optio
         }),
         KeyCode::Char('v') if app.settings.layout.skin == Skin::Visualizer => {
             app.viz.style = app.viz.style.next();
+            None
+        }
+        // The full-resolution GPU visualizer, in a window of its own.
+        KeyCode::Char('V') if app.settings.layout.skin == Skin::Visualizer => {
+            open_gpu_viz();
             None
         }
         KeyCode::Char('t') => {

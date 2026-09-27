@@ -35,6 +35,15 @@ playlists, search); press `t` for the other skins: Winamp 2, iTunes 4,
 a 2004 iPod, Zune, Windows Media Player 11, a big now-playing view,
 Windows 2000 Media Player, and a full-screen visualizer with styles after
 WMP's (bars, scope, fire storm, musical colors, alchemy, battery; `v` cycles).
+
+For the full-resolution version, open **Spotify Visualizer** from the app
+launcher (or press `V` in the visualizer skin): GPU shaders in their own
+window, driven by the same audio. Battery, Alchemy, Spectrum, Ambience and
+Warp are built in; ←/→ switch, `f` goes fullscreen, space/n/p control
+playback. Presets are small WGSL files, so you can write your own: drop one
+in `~/.config/omarchy-rust-spotify/viz/` (start from
+[`examples/viz/ring.wgsl`](examples/viz/ring.wgsl)) and it reloads each
+time you save.
 Customize it with `~/.config/omarchy-rust-spotify/tui.toml` (see
 [`examples/tui.toml`](examples/tui.toml)) and the daemon with `config.toml`
 (`device-name`, `bitrate`, `notifications`).

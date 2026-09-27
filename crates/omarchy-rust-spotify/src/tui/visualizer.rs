@@ -563,7 +563,7 @@ pub(super) fn draw(f: &mut Frame, app: &mut App) {
         &title,
         white(0xe8e8e8).add_modifier(Modifier::BOLD),
     );
-    let hint = format!("{} · v next", app.viz.style.name());
+    let hint = format!("{} · v next · V gpu", app.viz.style.name());
     let hw = hint.chars().count() as u16;
     text(
         buf,

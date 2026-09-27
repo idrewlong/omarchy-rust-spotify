@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Spotify Visualizer
+GenericName=Music Visualizer
+Comment=GPU visualizations of what omarchy-rust-spotify is playing
+Exec=/usr/bin/omarchy-rust-spotify-viz
+Icon=multimedia-audio-player
+Terminal=false
+Categories=AudioVideo;Audio;
+Keywords=spotify;music;visualizer;milkdrop;
+StartupWMClass=org.omarchy.rust-spotify.viz

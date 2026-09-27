@@ -10,7 +10,7 @@ mkdir -p ~/.local/bin ~/.config/systemd/user \
 # Write each binary beside its destination and rename it into place: the
 # rename is atomic, so an open player that re-execs on update never sees a
 # half-written file.
-for bin in omarchy-rust-spotifyd omarchy-rust-spotify; do
+for bin in omarchy-rust-spotifyd omarchy-rust-spotify omarchy-rust-spotify-viz; do
   install -m 755 "target/release/$bin" ~/.local/bin/".$bin.new"
   mv -f ~/.local/bin/".$bin.new" ~/.local/bin/"$bin"
 done
@@ -20,6 +20,8 @@ sed "s|^ExecStart=.*|ExecStart=$HOME/.local/bin/omarchy-rust-spotifyd|" \
 mkdir -p ~/.local/share/applications
 sed "s|/usr/bin/omarchy-rust-spotify|$HOME/.local/bin/omarchy-rust-spotify|" \
   packaging/desktop/omarchy-rust-spotify.desktop > ~/.local/share/applications/omarchy-rust-spotify.desktop
+sed "s|/usr/bin/omarchy-rust-spotify-viz|$HOME/.local/bin/omarchy-rust-spotify-viz|" \
+  packaging/desktop/omarchy-rust-spotify-viz.desktop > ~/.local/share/applications/omarchy-rust-spotify-viz.desktop
 
 # Float the player window (Omarchy's floating treatment), in a marked block
 # so re-running replaces rather than duplicates it.
@@ -29,6 +31,7 @@ if [[ -f $bindings ]]; then
   cat >> "$bindings" <<'LUA'
 -- omarchy-rust-spotify: begin
 o.window("org.omarchy.rust-spotify", { tag = "+floating-window" })
+o.window("org.omarchy.rust-spotify.viz", { float = true, center = true, size = { "(monitor_w*0.6)", "(monitor_h*0.6)" }, tag = "-default-opacity", opacity = "1 1" })
 -- omarchy-rust-spotify: end
 LUA
   hyprctl reload >/dev/null
