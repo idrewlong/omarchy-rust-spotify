@@ -54,13 +54,15 @@ const CHUNK_BYTES: usize = 5 * BYTES_PER_MS as usize;
 pub struct PulseSink {
     stream: Option<Simple>,
     interrupt: Interrupt,
+    tap: std::sync::Arc<crate::viz::Tap>,
 }
 
 impl PulseSink {
-    pub fn new(interrupt: Interrupt) -> Self {
+    pub fn new(interrupt: Interrupt, tap: std::sync::Arc<crate::viz::Tap>) -> Self {
         Self {
             stream: None,
             interrupt,
+            tap,
         }
     }
 
@@ -126,6 +128,8 @@ impl Sink for PulseSink {
     fn write(&mut self, packet: AudioPacket, converter: &mut Converter) -> SinkResult<()> {
         match packet {
             AudioPacket::Samples(samples) => {
+                // The visualizer's copy (a no-op unless someone watches).
+                self.tap.push(&samples);
                 let pcm = converter.f64_to_s16(&samples);
                 // SAFETY: i16 has no padding and any byte pattern is a valid u8.
                 let bytes =

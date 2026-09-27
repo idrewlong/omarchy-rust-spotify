@@ -611,6 +611,29 @@ fn main() -> Result<()> {
             latency(args.get(2).map(|n| n.parse()).transpose()?.unwrap_or(20))
         }
         Some("debug") if args.get(1).map(String::as_str) == Some("term") => tui::debug_term(),
+        Some("debug") if args.get(1).map(String::as_str) == Some("viz") => {
+            // A few spectrum frames as text: lows on the left.
+            let mut c = Client::connect()?;
+            let id = c.id();
+            c.send(&ClientMsg::Sub {
+                id,
+                topics: vec!["player".into(), "viz".into()],
+            })?;
+            let mut n = 0;
+            while n < 5 {
+                if let ServerMsg::Viz { bands } = c.recv()? {
+                    n += 1;
+                    let line: String = bands
+                        .iter()
+                        .map(|&b| {
+                            [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'][b as usize * 8 / 255]
+                        })
+                        .collect();
+                    println!("{line}  peak {}", bands.iter().max().unwrap_or(&0));
+                }
+            }
+            Ok(())
+        }
         Some("debug") if args.get(1).map(String::as_str) == Some("api") => {
             let path = args.get(2).context("usage: debug api <path>")?.clone();
             if let ServerMsg::Json { value, .. } =

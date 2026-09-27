@@ -14,6 +14,7 @@ mod sink;
 mod state;
 mod supervisor;
 mod sysvol;
+mod viz;
 mod webapi;
 
 use std::os::unix::fs::PermissionsExt;
@@ -344,9 +345,12 @@ async fn run() -> Result<()> {
         ..Default::default()
     };
     let interrupt = sink::Interrupt::default();
+    let tap = Arc::new(viz::Tap::default());
+    let (viz_tx, _) = broadcast::channel::<Arc<Vec<u8>>>(8);
+    tokio::spawn(viz::run(tap.clone(), viz_tx.clone()));
     let player = Player::new(player_config, session.clone(), mixer.get_soft_volume(), {
-        let interrupt = interrupt.clone();
-        move || Box::new(sink::PulseSink::new(interrupt))
+        let (interrupt, tap) = (interrupt.clone(), tap.clone());
+        move || Box::new(sink::PulseSink::new(interrupt, tap))
     });
     let events = player.get_player_event_channel();
 
@@ -382,7 +386,11 @@ async fn run() -> Result<()> {
     tokio::spawn({
         let (state, updates, cmds) = (snapshot_rx.clone(), updates_tx.clone(), cmds_tx.clone());
         async move {
-            if let Err(e) = ipc::run(listener, state, updates, cmds, ipc_library).await {
+            let viz = ipc::VizFeed {
+                tap,
+                frames: viz_tx,
+            };
+            if let Err(e) = ipc::run(listener, state, updates, cmds, ipc_library, viz).await {
                 tracing::error!("IPC stopped: {e:#}");
             }
         }

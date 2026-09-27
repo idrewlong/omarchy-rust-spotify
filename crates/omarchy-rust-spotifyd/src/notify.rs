@@ -14,6 +14,19 @@ use crate::state::Update;
 
 const GLYPH: &str = "󰓇";
 
+/// The command that opens the player, as the JSON argv Omarchy's
+/// notification daemon runs on click.
+fn open_player_argv() -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    serde_json::json!([
+        "omarchy-launch-or-focus-tui",
+        "--app-id=org.omarchy.rust-spotify",
+        format!("{home}/.local/bin/omarchy-rust-spotify"),
+        "tui"
+    ])
+    .to_string()
+}
+
 struct Notifier {
     conn: zbus::Connection,
     /// Reused so skips update one notification instead of stacking.
@@ -28,6 +41,9 @@ impl Notifier {
         if let Some(path) = image {
             hints.insert("image-path", Value::from(path));
         }
+        // Clicking the notification opens (or focuses) the player, the way
+        // omarchy-notification-send --exec does.
+        hints.insert("omarchy-exec-argv", Value::from(open_player_argv()));
         let reply = self
             .conn
             .call_method(

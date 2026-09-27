@@ -12,6 +12,14 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{broadcast, mpsc, watch};
 
 use crate::library::Library;
+use crate::viz::Tap;
+
+/// The visualizer: the tap to switch on while watched, and its frames.
+#[derive(Clone)]
+pub struct VizFeed {
+    pub tap: Arc<Tap>,
+    pub frames: broadcast::Sender<Arc<Vec<u8>>>,
+}
 use crate::state::Update;
 
 /// Bind the socket (0700 directory, 0600 socket). Done before anything else
@@ -37,6 +45,7 @@ pub async fn run(
     updates: broadcast::Sender<Arc<Update>>,
     cmds: mpsc::UnboundedSender<Command>,
     library: Arc<Library>,
+    viz: VizFeed,
 ) -> anyhow::Result<()> {
     // SAFETY: getuid cannot fail.
     let uid = unsafe { libc::getuid() };
@@ -49,14 +58,15 @@ pub async fn run(
                 continue;
             }
         }
-        let (state, updates, cmds, library) = (
+        let (state, updates, cmds, library, viz) = (
             state.clone(),
             updates.clone(),
             cmds.clone(),
             library.clone(),
+            viz.clone(),
         );
         tokio::spawn(async move {
-            if let Err(e) = serve(stream, state, updates, cmds, library).await {
+            if let Err(e) = serve(stream, state, updates, cmds, library, viz).await {
                 tracing::debug!("IPC client ended: {e:#}");
             }
         });
@@ -69,6 +79,7 @@ async fn serve(
     updates: broadcast::Sender<Arc<Update>>,
     cmds: mpsc::UnboundedSender<Command>,
     library: Arc<Library>,
+    viz: VizFeed,
 ) -> anyhow::Result<()> {
     let (read, mut write) = stream.into_split();
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<ServerMsg>();
@@ -93,6 +104,7 @@ async fn serve(
 
     let mut lines = BufReader::new(read).lines();
     let mut forwarder: Option<tokio::task::JoinHandle<()>> = None;
+    let mut viz_task: Option<tokio::task::JoinHandle<()>> = None;
     while let Some(line) = lines.next_line().await? {
         let msg: ClientMsg = match serde_json::from_str(&line) {
             Ok(m) => m,
@@ -107,6 +119,18 @@ async fn serve(
         };
         match msg {
             ClientMsg::Sub { id, topics } => {
+                // Each sub states the full set of topics: start or stop
+                // the visualizer feed to match.
+                let wants_viz = topics.iter().any(|t| t == "viz");
+                if wants_viz && viz_task.is_none() {
+                    viz_task = Some(tokio::spawn(forward_viz(
+                        viz.frames.subscribe(),
+                        viz.tap.watch(),
+                        out_tx.clone(),
+                    )));
+                } else if !wants_viz && let Some(t) = viz_task.take() {
+                    t.abort();
+                }
                 if !topics.iter().any(|t| t == "player") {
                     out_tx.send(ServerMsg::Ok { id })?;
                     continue;
@@ -155,6 +179,9 @@ async fn serve(
     if let Some(f) = forwarder {
         f.abort();
     }
+    if let Some(t) = viz_task {
+        t.abort();
+    }
     drop(out_tx);
     let _ = writer.await;
     Ok(())
@@ -196,6 +223,31 @@ async fn forward(
                     return;
                 }
             }
+            Err(broadcast::error::RecvError::Closed) => return,
+        }
+    }
+}
+
+/// Spectrum frames to one client. Holding `_watch` keeps the tap on; the
+/// task is aborted (dropping it) when the client unsubscribes or leaves.
+async fn forward_viz(
+    mut rx: broadcast::Receiver<Arc<Vec<u8>>>,
+    _watch: crate::viz::Watch,
+    out: mpsc::UnboundedSender<ServerMsg>,
+) {
+    loop {
+        match rx.recv().await {
+            Ok(bands) => {
+                if out
+                    .send(ServerMsg::Viz {
+                        bands: (*bands).clone(),
+                    })
+                    .is_err()
+                {
+                    return;
+                }
+            }
+            Err(broadcast::error::RecvError::Lagged(_)) => {}
             Err(broadcast::error::RecvError::Closed) => return,
         }
     }

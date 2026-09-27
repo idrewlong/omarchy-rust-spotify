@@ -45,8 +45,14 @@ ln -sfn "$PWD/omarchy/plugin" ~/.config/omarchy/plugins/$plugin_id
 shell_json=~/.config/omarchy/shell.json
 section=""
 if [[ -f $shell_json ]] && ! jq -e --arg id "$plugin_id" '[.bar.layout[][]? | select(.id == $id)] | length > 0' "$shell_json" >/dev/null; then
-  section=center
+  section=right
   cp "$shell_json" "$shell_json.bak-rust-spotify"
+  # Just left of the weather, when there is one.
+  if jq -e '[.bar.layout.right[]? | select(.id == "omarchy.weather")] | length > 0' "$shell_json" >/dev/null; then
+    jq --arg id "$plugin_id" '.bar.layout.right |= ((map(.id) | index("omarchy.weather")) as $i | .[:$i] + [{id: $id}] + .[$i:])' \
+      "$shell_json.bak-rust-spotify" > "$shell_json"
+    section=""
+  fi
   if jq -e '[.bar.layout[][]? | select(.id == "io.github.idrewlong.ncspot-keepalive")] | length > 0' "$shell_json" >/dev/null; then
     jq --arg id "$plugin_id" '.bar.layout |= map_values(map(if .id == "io.github.idrewlong.ncspot-keepalive" then {id: $id} else . end))' \
       "$shell_json.bak-rust-spotify" > "$shell_json"

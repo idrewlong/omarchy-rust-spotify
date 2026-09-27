@@ -287,6 +287,11 @@ pub enum ServerMsg {
         id: u64,
         value: serde_json::Value,
     },
+    /// Spectrum for the "viz" topic, ~30 per second: log-spaced bands from
+    /// 40 Hz to 16 kHz, each 0..=255 over a -72..0 dB range.
+    Viz {
+        bands: Vec<u8>,
+    },
 }
 
 /// The top-level fields of `new` that differ from `old`.

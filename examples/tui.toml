@@ -15,6 +15,9 @@
 #   winamp    Winamp 2.x base skin: green LCD, playlist editor
 #   itunes    iTunes 4, 2003 brushed metal, striped song list
 #   ipod      2004 iPod with a clickable click wheel and menus
+#   zune      Zune software 2006: black, lowercase, magenta/orange
+#   wmp11     Windows Media Player 11 (Vista): glossy black Aero
+#   visualizer  full-screen spectrum from the real audio (v: bars/mirror)
 #   classic   big now-playing, in your Omarchy theme
 #   wmp2000   Windows 2000 era Media Player
 # [colors] apply to library and classic; the period skins keep their own.

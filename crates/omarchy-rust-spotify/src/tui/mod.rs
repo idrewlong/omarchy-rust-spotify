@@ -38,8 +38,11 @@ mod ipod;
 mod itunes;
 mod library;
 mod paint;
+mod visualizer;
 mod winamp;
 mod wmp;
+mod wmp11;
+mod zune;
 
 // ---------------------------------------------------------------- settings
 
@@ -57,6 +60,12 @@ enum Skin {
     Itunes,
     /// The 2004 iPod with Click Wheel.
     Ipod,
+    /// Zune software, 2006: black, lowercase, typography.
+    Zune,
+    /// Windows Media Player 11 (Vista), glossy black Aero.
+    Wmp11,
+    /// Full-screen spectrum from the real audio, WMP-visualization style.
+    Visualizer,
     Classic,
     Wmp2000,
 }
@@ -67,7 +76,7 @@ impl Skin {
     fn uses_browser(self) -> bool {
         matches!(
             self,
-            Skin::Library | Skin::Winamp | Skin::Itunes | Skin::Ipod
+            Skin::Library | Skin::Winamp | Skin::Itunes | Skin::Ipod | Skin::Zune | Skin::Wmp11
         )
     }
 
@@ -76,7 +85,10 @@ impl Skin {
             Skin::Library => Skin::Winamp,
             Skin::Winamp => Skin::Itunes,
             Skin::Itunes => Skin::Ipod,
-            Skin::Ipod => Skin::Classic,
+            Skin::Ipod => Skin::Zune,
+            Skin::Zune => Skin::Wmp11,
+            Skin::Wmp11 => Skin::Visualizer,
+            Skin::Visualizer => Skin::Classic,
             Skin::Classic => Skin::Wmp2000,
             Skin::Wmp2000 => Skin::Library,
         }
@@ -363,6 +375,7 @@ struct App {
     hits: Vec<(Rect, Hit)>,
     browser: library::Browser,
     ipod: ipod::Ipod,
+    viz: visualizer::Viz,
 }
 
 #[derive(Debug, Clone)]
@@ -453,34 +466,53 @@ fn banner(app: &App) -> Option<String> {
     }
 }
 
-/// Render the cover (if any) as a square in `rect`.
+/// Render the cover (if any) as a square, centered in `rect`.
 ///
-/// Scaled here to exact pixels rather than by ratatui-image: its fit uses the
-/// area's full pixel height, and Sixel pads images to 6-pixel bands, so a
-/// 4-row (104 px) cover came out 108 px tall and bled into the row below,
-/// where redraws then erased a strip of it. Height is rounded down to a
-/// multiple of 6 so the image always stays inside its cells.
+/// Sized to whole cells whose pixel height is a multiple of 6, so the image
+/// covers its cells exactly. Sixel pads to 6-pixel bands: a taller-than-cells
+/// image bled into the row below, and a shorter one (rounded down) left a
+/// strip of its last row uncovered, where stale pixels showed through
+/// (image cells are skipped by the diff, so nothing repaints them).
 fn render_cover(f: &mut Frame, app: &mut App, rect: Rect) {
     let font = app.picker.font_size();
     let (fw, fh) = (font.width.max(1) as u32, font.height.max(1) as u32);
     let Some(cover) = app.cover.as_mut() else {
         return;
     };
-    let key = (rect.width, rect.height);
+    // Rows in steps whose pixel height divides by 6 (26 px rows: 3 at a time).
+    let step = 6 / gcd(fh, 6);
+    let max_rows = (rect.height as u32).min(rect.width as u32 * fw / fh);
+    let rows = max_rows / step * step;
+    if rows == 0 {
+        return;
+    }
+    let h_px = rows * fh;
+    let cols = ((h_px as f64 / fw as f64).round() as u32).clamp(1, rect.width as u32);
+    let area = Rect {
+        x: rect.x + (rect.width - cols as u16) / 2,
+        y: rect.y + (rect.height - rows as u16) / 2,
+        width: cols as u16,
+        height: rows as u16,
+    };
+    let key = (area.width, area.height);
     if cover.sized.as_ref().map(|(k, _)| *k) != Some(key) {
-        let max_w = rect.width as u32 * fw;
-        let max_h = rect.height as u32 * fh / 6 * 6;
-        let side = max_w.min(max_h).max(1);
-        let img = cover.image.resize_exact(side, side, FilterType::Triangle);
+        // Exactly the cells' pixels (a few percent off square at most).
+        let img = cover
+            .image
+            .resize_exact(cols * fw, h_px, FilterType::Triangle);
         cover.sized = Some((key, app.picker.new_resize_protocol(img)));
     }
     if let Some((_, proto)) = cover.sized.as_mut() {
         f.render_stateful_widget(
             StatefulImage::default().resize(Resize::Fit(None)),
-            rect,
+            area,
             proto,
         );
     }
+}
+
+fn gcd(a: u32, b: u32) -> u32 {
+    if b == 0 { a.max(1) } else { gcd(b, a % b) }
 }
 
 fn draw(f: &mut Frame, app: &mut App) {
@@ -490,6 +522,9 @@ fn draw(f: &mut Frame, app: &mut App) {
         Skin::Winamp => winamp::draw(f, app),
         Skin::Itunes => itunes::draw(f, app),
         Skin::Ipod => ipod::draw(f, app),
+        Skin::Zune => zune::draw(f, app),
+        Skin::Wmp11 => wmp11::draw(f, app),
+        Skin::Visualizer => visualizer::draw(f, app),
         Skin::Classic => classic::draw(f, app),
         Skin::Wmp2000 => wmp::draw(f, app),
     }
@@ -593,6 +628,13 @@ fn key_command(app: &mut App, code: KeyCode, mods: KeyModifiers) -> Option<Optio
         KeyCode::Char('-') => Some(Command::Volume {
             pct: s.volume.saturating_sub(5),
         }),
+        KeyCode::Char('v') if app.settings.layout.skin == Skin::Visualizer => {
+            app.viz.style = match app.viz.style {
+                visualizer::Style_::Bars => visualizer::Style_::Mirror,
+                visualizer::Style_::Mirror => visualizer::Style_::Bars,
+            };
+            None
+        }
         KeyCode::Char('t') => {
             app.settings.layout.skin = app.settings.layout.skin.next();
             app.needs_clear = true;
@@ -660,10 +702,12 @@ fn event_loop(
         hits: Vec::new(),
         browser: Default::default(),
         ipod: Default::default(),
+        viz: Default::default(),
     };
     let mut watched = (mtime(&theme_path()), mtime(&tui_path()));
     let mut last_check = std::time::Instant::now();
     let mut last_playlists = std::time::Instant::now();
+    let mut viz_subscribed = false;
     // A new binary seen, and since when unchanged: switch only once it has
     // been stable for a second (i.e. fully written).
     let mut update_seen: Option<(Option<(SystemTime, u64)>, std::time::Instant)> = None;
@@ -680,7 +724,22 @@ fn event_loop(
 
         // While playing, wake 4x a second to move the clock; otherwise once
         // a second for update/config checks only.
-        let wait = if app.state.status == Status::Playing {
+        // The visualizer subscribes to spectrum frames only while showing.
+        let want_viz = app.settings.layout.skin == Skin::Visualizer;
+        if app.connected && want_viz != viz_subscribed {
+            let mut topics = vec!["player".to_string()];
+            if want_viz {
+                topics.push("viz".into());
+            }
+            send_msg(&mut writer, &ClientMsg::Sub { id: 2, topics });
+            viz_subscribed = want_viz;
+        }
+        if want_viz {
+            app.viz.step();
+        }
+        let wait = if want_viz && app.viz.animating() {
+            Duration::from_millis(33)
+        } else if app.state.status == Status::Playing {
             Duration::from_millis(250)
         } else {
             Duration::from_secs(1)
@@ -738,6 +797,7 @@ fn event_loop(
                 }
                 Msg::Input(Event::Resize(..)) => app.needs_clear = true,
                 Msg::Input(_) => {}
+                Msg::Server(ServerMsg::Viz { ref bands }) => app.viz.frame(bands),
                 Msg::Server(ref m @ (ServerMsg::Res { .. } | ServerMsg::Err { .. })) => {
                     app.browser.on_response(m);
                 }
@@ -804,6 +864,7 @@ fn event_loop(
         if !app.connected {
             writer = connect(tx.clone()).ok();
             app.connected = writer.is_some();
+            viz_subscribed = false;
         }
     }
 }
@@ -872,6 +933,7 @@ pub(super) mod tests {
             hits: Vec::new(),
             browser: Default::default(),
             ipod: Default::default(),
+            viz: Default::default(),
         }
     }
 
@@ -884,6 +946,9 @@ pub(super) mod tests {
             Skin::Winamp,
             Skin::Itunes,
             Skin::Ipod,
+            Skin::Zune,
+            Skin::Wmp11,
+            Skin::Visualizer,
             Skin::Classic,
             Skin::Wmp2000,
         ] {
@@ -904,6 +969,13 @@ pub(super) mod tests {
                         app.browser = library::Browser::sample();
                         // The iPod's menus as well as Now Playing.
                         app.ipod.menu = w % 2 == 0;
+                        // A real-looking spectrum, both visualizer styles.
+                        let bands: Vec<u8> = (0..48).map(|i| (255 - i * 5) as u8).collect();
+                        app.viz.frame(&bands);
+                        app.viz.step();
+                        if w % 2 == 0 {
+                            app.viz.style = visualizer::Style_::Mirror;
+                        }
                     }
                     let mut term = Terminal::new(TestBackend::new(w, h)).unwrap();
                     term.draw(|f| draw(f, &mut app))
