@@ -119,14 +119,7 @@ fn track_from(item: &AudioItem) -> Track {
             album.clone().unwrap_or_default(),
         ),
     };
-    // Largest cover up to 700px wide; the full player never needs more.
-    let cover_url = item
-        .covers
-        .iter()
-        .filter(|c| c.width <= 700)
-        .max_by_key(|c| c.width)
-        .or_else(|| item.covers.first())
-        .map(|c| c.url.clone());
+    let cover_url = crate::covers::best(&item.covers);
     Track {
         uri: item.uri.clone(),
         name: item.name.clone(),
@@ -161,6 +154,9 @@ pub async fn run(
                 let Some(ev) = ev else { break };
                 let received = mono_ns();
                 tracing::debug!(?ev, "player event");
+                if let PlayerEvent::Preloading { track_id } = &ev {
+                    covers.prefetch(track_id.clone());
+                }
                 let old = state.clone();
                 let fx = reduce(&mut state, &ev, unix_ms());
                 (received, old, fx)
