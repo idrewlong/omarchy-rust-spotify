@@ -128,8 +128,24 @@ async fn execute(
     Ok(())
 }
 
-#[tokio::main]
-async fn main() -> Result<()> {
+fn main() -> Result<()> {
+    // glibc gives every thread that allocates its own malloc arena and keeps
+    // their pages around: with ~25 threads that was ~20 MB of RSS (47 MB vs
+    // 27 MB measured). Two arenas is plenty for a mostly idle daemon. Must run
+    // before any thread exists.
+    // SAFETY: mallopt only adjusts allocator tunables.
+    unsafe { libc::mallopt(libc::M_ARENA_MAX, 2) };
+
+    // Two workers: the daemon's own work is bursts of tiny tasks. librespot
+    // runs its audio on dedicated threads regardless.
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()?
+        .block_on(run())
+}
+
+async fn run() -> Result<()> {
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
