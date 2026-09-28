@@ -742,6 +742,14 @@ impl Library {
     }
 
     async fn handle(&self, req: Request) -> Result<Answer> {
+        // Signed out, nothing can answer (and suggesting a developer app
+        // then, as the Web API's error would, sends a new user the wrong
+        // way). Only raw Web API calls go without the Spotify session.
+        if !matches!(req, Request::Api { .. })
+            && self.session().username().is_empty()
+        {
+            bail!("not signed in: run `skinamp login` (or use Sign in in the bar icon's card)");
+        }
         Ok(Answer::Sections(match req {
             Request::Api { path } => {
                 return Ok(Answer::Json(
