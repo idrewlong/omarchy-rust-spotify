@@ -130,7 +130,9 @@ packages are installed or changed. **Set up** (or `scripts/install.sh`):
 
 It never replaces a file it didn't put there: if any of those paths holds
 something else (or a file it installed has been edited since), it stops
-before changing anything and lists them. `scripts/uninstall.sh` removes
+before changing anything and lists them. Installs from before the record
+(0.2.0, 0.2.1) are recognised by content: Skinamp's released binaries by
+their hashes, the other files by being exactly what it installs. `scripts/uninstall.sh` removes
 what the record lists and the marked window rules, nothing else.
 
 ## Your data and the network

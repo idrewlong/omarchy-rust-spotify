@@ -4,14 +4,16 @@
 # scripts/install.sh downloads the tarball matching manifest.json's version,
 # so the tag must equal it (checked below), and only once its hash is pinned
 # in packaging/release.sha256 (scripts/pin-release.sh).
+#
+# Every action is pinned to a commit and the Rust toolchain to a version,
+# and there's no build cache: what builds a release is what's reviewed here.
 name: release
 
 on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write
+permissions: {}
 
 jobs:
   build:
@@ -28,15 +30,18 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
       - name: Tag matches manifest.json
         run: |
           want="v$(jq -r .version manifest.json)"
           [ "$want" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME but manifest.json says $want"; exit 1; }
       - name: System libraries
         run: sudo apt-get update && sudo apt-get install -y libpulse-dev libdbus-1-dev pkg-config
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@02cb101ec7c40f2c49e1d9714d64511d8e1b74de
+        with:
+          toolchain: 1.98.1
       - name: Test
         run: cargo test --release --locked
       - name: Build
@@ -47,10 +52,10 @@ jobs:
           mkdir dist
           tar -C target/release -czf "dist/skinamp-$v-${{ matrix.arch }}-linux.tar.gz" \
             skinampd skinamp skinamp-viz
-      - uses: actions/attest-build-provenance@v2
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: dist/*.tar.gz
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: dist-${{ matrix.arch }}
           path: dist/*
@@ -58,8 +63,10 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: dist-*
           merge-multiple: true

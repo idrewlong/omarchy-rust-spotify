@@ -12,8 +12,10 @@
 #
 # It records each file it puts in place, with its hash, in
 # ~/.local/share/skinamp/installed-files. It only replaces a file that
-# isn't there yet or that it put there itself, unchanged since; anything
-# else stops it before it changes anything. uninstall.sh removes only what
+# isn't there yet, that it put there itself (unchanged since), that already
+# holds exactly what it would install, or that is one of Skinamp's own
+# released binaries (packaging/prerecord-binaries.sha256, for installs made
+# before the record); anything else stops it before it changes anything. uninstall.sh removes only what
 # that record lists.
 #
 #   install.sh             release binaries, or build from source
@@ -96,22 +98,32 @@ record=~/.local/share/skinamp/installed-files
 declare -A owned=()
 if [[ -f $record ]]; then
   while read -r sum path; do owned[$path]=$sum; done < "$record"
-elif [[ -f ~/.local/share/skinamp/installed-version ]]; then
-  # Installed by 0.2.x, before the record: those files are at these paths.
-  for ((i = 0; i < ${#files[@]}; i += 3)); do
-    [[ -f ~/${files[i]} ]] && owned[${files[i]}]=$(sha256sum < ~/"${files[i]}" | cut -d' ' -f1)
-  done
 fi
+# Releases before the record (0.2.0, 0.2.1): their binaries are known by
+# hash, and the other files were exactly what this installs now.
+declare -A released=()
+while read -r sum name _; do
+  [[ $sum == \#* ]] || released[$sum]=$name
+done < "$dir/packaging/prerecord-binaries.sha256"
+
+# ours DEST SOURCE: whether DEST is free, or skinamp's to replace.
+ours() {
+  local path=$1 src=$2 sum
+  [[ -e ~/$path || -L ~/$path ]] || return 0
+  [[ -f ~/$path && ! -L ~/$path ]] || return 1
+  sum=$(sha256sum < ~/"$path" | cut -d' ' -f1)
+  [[ $sum == "${owned[$path]:-}" ]] && return 0
+  # Already exactly what it would install.
+  [[ -f $src && $sum == $(sha256sum < "$src" | cut -d' ' -f1) ]] && return 0
+  # A binary from a release before the record, at its own name.
+  [[ ${released[$sum]:-} == "${path##*/}" && ${path%/*} == .local/bin ]] && return 0
+  return 1
+}
 
 # Stop before changing anything if a destination is someone else's.
 conflicts=()
 for ((i = 0; i < ${#files[@]}; i += 3)); do
-  path=${files[i]}
-  [[ -e ~/$path || -L ~/$path ]] || continue
-  if [[ -z ${owned[$path]:-} || -L ~/$path ||
-    $(sha256sum < ~/"$path" | cut -d' ' -f1) != "${owned[$path]}" ]]; then
-    conflicts+=("~/$path")
-  fi
+  ours "${files[i]}" "${files[i + 2]}" || conflicts+=("~/${files[i]}")
 done
 if ((${#conflicts[@]})); then
   echo "Not installing: skinamp didn't put these there (or they've changed since):" >&2

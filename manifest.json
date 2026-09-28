@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "io.github.idrewlong.skinamp",
   "name": "Skinamp",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "author": "idrewlong",
   "license": "MIT",
   "description": "The Spotify player you can skin. A music icon in the bar with a rich mini player on hover (cover, live spectrum, the current lyric line, seek, transport, like, volume); click it for the full player with eleven looks, from today's Spotify app to Winamp, iPod and Windows Media Player, plus real visualizers.",
