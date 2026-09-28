@@ -14,6 +14,12 @@ the background player and 20 MB for the player window. Apple Silicon
 
 ![The Spotify skin, Winamp, the iPod, Windows Media Player 2000 and two visualizers (demo mode's made-up music)](preview.png)
 
+<details><summary>Watch a tour of the skins (GIF, 3 MB)</summary>
+
+![Cycling through the skins and visualizers in demo mode](docs/media/skinamp-tour.gif)
+
+</details>
+
 ## Install
 
 ```sh
@@ -91,6 +97,82 @@ omarchy plugin remove io.github.idrewlong.skinamp
 The first command stops and removes the player, its service, launcher
 entries and window rules; add `--purge` to also delete your sign-in, cache
 and settings.
+
+## What the installer does
+
+Everything goes in your home folder; nothing needs `sudo` and no system
+packages are installed or changed. **Set up** (or `scripts/install.sh`):
+
+1. Downloads the release for your CPU from this repo's GitHub releases and
+   checks it against the release's `SHA256SUMS` (refusing it on a
+   mismatch). With no release for your machine, it builds from this
+   checkout instead, if Rust is installed.
+2. Installs three programs into `~/.local/bin`: `skinamp` (the player and
+   command line), `skinampd` (the background player) and `skinamp-viz`
+   (the visualizer window).
+3. Adds a systemd **user** service, `~/.config/systemd/user/skinampd.service`,
+   and enables and starts it (it restarts itself if it ever stops).
+4. Adds the launcher entry `~/.local/share/applications/skinamp.desktop` and
+   its icons in `~/.local/share/icons/hicolor/scalable/apps/`.
+5. Adds two window rules (the player and visualizer float) to
+   `~/.config/hypr/bindings.lua`, between `-- skinamp: begin` and
+   `-- skinamp: end` markers, and reloads Hyprland.
+6. Records the installed version in `~/.local/share/skinamp/installed-version`
+   (the bar card compares it with the plugin's, to offer updates).
+7. Opens Spotify's sign-in page the first time.
+
+Upgrading from `omarchy-rust-spotify` (Skinamp's old name), it also moves
+that install's sign-in, settings and cache over, removes its service,
+programs and launcher entries, and keeps `omarchy-rust-spotify` as an alias
+for `skinamp`. `scripts/uninstall.sh` removes everything in the list above.
+
+## Your data and the network
+
+**Stored on your computer, and only there:**
+
+- `~/.local/share/skinamp/secrets/`: your Spotify sign-in (readable by you
+  only). Sign out with `skinamp logout`.
+- `~/.cache/skinamp/`: cover art, this device's id, which playlists you
+  played here and when (for "recently played" order). No audio is cached.
+- `~/.config/skinamp/`: your settings, if you make any (`tui.toml`,
+  `config.toml`, your own visualizers in `viz/`).
+
+**Who Skinamp talks to:**
+
+- **Spotify**, to sign in, stream and read your library.
+- **LRCLIB** (lrclib.net), for lyrics: the song's title, artist, album and
+  length, only while the Lyrics skin or the bar card is showing that song.
+- **GitHub**, when you install or update.
+
+No analytics, no telemetry, no accounts other than your Spotify one.
+
+## Troubleshooting
+
+- **"Spotify Premium is required."** Spotify only allows third-party
+  players (every one built on librespot, including this) for Premium
+  accounts.
+- **"Not signed in", or sign-in doesn't finish.** Click **Sign in** in the
+  bar card (or run `skinamp login`) and approve in the browser. If the page
+  says it can't connect, something else is using port 8989; close it and
+  try again.
+- **No sound.** Skinamp plays through your system audio (PipeWire), at your
+  system volume: check the bar's volume and output device. `skinamp
+  status` shows what the player thinks is happening, and
+  `journalctl --user -u skinampd -e` shows its log.
+- **"Omarchy" isn't in Spotify's device list.** It appears when the
+  background player is running and signed in to the same account:
+  `skinamp status` should say `device: Omarchy (connected)`. If not,
+  `systemctl --user restart skinampd`. Rename the device with
+  `device-name = "…"` in `~/.config/skinamp/config.toml`.
+- **The bar card says "Player isn't running".** Click **Start the player**
+  in the card, or `systemctl --user start skinampd`.
+- **No music icon in the bar.** `omarchy plugin enable io.github.idrewlong.skinamp`
+  (add `--section center` to choose where).
+- **The HD visualizers or covers don't show in the player.** They need a
+  terminal that displays images (Sixel): foot, Omarchy's default, does.
+  The visualizer window (`V`) works everywhere.
+- **Something else?** [Open an issue](https://github.com/idrewlong/skinamp/issues/new/choose)
+  with what you did, what happened, and `skinamp --version`.
 
 ## Develop
 

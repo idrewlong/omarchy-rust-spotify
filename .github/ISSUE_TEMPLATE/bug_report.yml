@@ -1,0 +1,54 @@
+name: Bug report
+description: Something in Skinamp doesn't work as it should
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. Please check **Troubleshooting** in the README first
+        (no sound, device not showing, Premium). Don't paste tokens or anything
+        from `~/.local/share/skinamp`.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what you saw instead.
+    validations:
+      required: true
+  - type: dropdown
+    id: part
+    attributes:
+      label: Which part
+      multiple: true
+      options:
+        - Bar widget / hover card
+        - Player (skinamp TUI)
+        - Visualizer (skinamp-viz)
+        - Playback / daemon (skinampd)
+        - Install / update / uninstall
+        - Sign-in
+  - type: input
+    id: version
+    attributes:
+      label: Skinamp version
+      description: Output of `skinamp --version`
+    validations:
+      required: true
+  - type: input
+    id: system
+    attributes:
+      label: System
+      description: Architecture and Omarchy version, e.g. `x86_64, Omarchy 3.x` (`uname -m`, `omarchy version`)
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Daemon log
+      description: Output of `journalctl --user -u skinampd -n 100 --no-pager`. Check it for anything private before posting.
+      render: text
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else
+      description: Screenshots, terminal name, skin in use, steps to reproduce.
