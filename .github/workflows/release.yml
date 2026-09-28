@@ -1,7 +1,9 @@
 # Builds the binaries for each tagged version (v0.1.0, ...) on x86_64 and
-# aarch64 Linux and attaches them to the GitHub release with SHA256SUMS.
+# aarch64 Linux, attests where they were built (`gh attestation verify`),
+# and attaches them to the GitHub release with SHA256SUMS.
 # scripts/install.sh downloads the tarball matching manifest.json's version,
-# so the tag must equal it (checked below).
+# so the tag must equal it (checked below), and only once its hash is pinned
+# in packaging/release.sha256 (scripts/pin-release.sh).
 name: release
 
 on:
@@ -21,6 +23,10 @@ jobs:
           - arch: aarch64
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
     steps:
       - uses: actions/checkout@v4
       - name: Tag matches manifest.json
@@ -41,6 +47,9 @@ jobs:
           mkdir dist
           tar -C target/release -czf "dist/skinamp-$v-${{ matrix.arch }}-linux.tar.gz" \
             skinampd skinamp skinamp-viz
+      - uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*.tar.gz
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.arch }}

@@ -95,8 +95,9 @@ omarchy plugin remove io.github.idrewlong.skinamp
 ```
 
 The first command stops and removes the player, its service, launcher
-entries and window rules; add `--purge` to also delete your sign-in, cache
-and settings.
+entry, icons and window rules: only the files the installer recorded
+putting there, and only if they're unchanged since (it lists any it
+keeps). Add `--purge` to also delete your sign-in, cache and settings.
 
 ## What the installer does
 
@@ -104,9 +105,13 @@ Everything goes in your home folder; nothing needs `sudo` and no system
 packages are installed or changed. **Set up** (or `scripts/install.sh`):
 
 1. Downloads the release for your CPU from this repo's GitHub releases and
-   checks it against the release's `SHA256SUMS` (refusing it on a
-   mismatch). With no release for your machine, it builds from this
-   checkout instead, if Rust is installed.
+   checks it against the hash pinned in the plugin itself,
+   [`packaging/release.sha256`](packaging/release.sha256), refusing it on
+   a mismatch. Release tarballs are built by this repo's
+   [release workflow](.github/workflows/release.yml) with a build
+   attestation (`gh attestation verify <tarball> --repo idrewlong/skinamp`).
+   With no pinned release for your machine, it builds from this checkout
+   instead, if Rust is installed.
 2. Installs three programs into `~/.local/bin`: `skinamp` (the player and
    command line), `skinampd` (the background player) and `skinamp-viz`
    (the visualizer window).
@@ -117,14 +122,16 @@ packages are installed or changed. **Set up** (or `scripts/install.sh`):
 5. Adds two window rules (the player and visualizer float) to
    `~/.config/hypr/bindings.lua`, between `-- skinamp: begin` and
    `-- skinamp: end` markers, and reloads Hyprland.
-6. Records the installed version in `~/.local/share/skinamp/installed-version`
-   (the bar card compares it with the plugin's, to offer updates).
+6. Records each file it put in place, with its hash, in
+   `~/.local/share/skinamp/installed-files`, and the version in
+   `~/.local/share/skinamp/installed-version` (the bar card compares it
+   with the plugin's, to offer updates).
 7. Opens Spotify's sign-in page the first time.
 
-Upgrading from `omarchy-rust-spotify` (Skinamp's old name), it also moves
-that install's sign-in, settings and cache over, removes its service,
-programs and launcher entries, and keeps `omarchy-rust-spotify` as an alias
-for `skinamp`. `scripts/uninstall.sh` removes everything in the list above.
+It never replaces a file it didn't put there: if any of those paths holds
+something else (or a file it installed has been edited since), it stops
+before changing anything and lists them. `scripts/uninstall.sh` removes
+what the record lists and the marked window rules, nothing else.
 
 ## Your data and the network
 
