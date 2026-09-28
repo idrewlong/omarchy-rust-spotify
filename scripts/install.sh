@@ -107,10 +107,11 @@ icons=~/.local/share/icons/hicolor/scalable/apps
 mkdir -p "$icons"
 cp "$dir/packaging/icons/skinamp.svg" "$dir/packaging/icons/skinamp-viz.svg" "$icons/"
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t ~/.local/share/icons/hicolor 2>/dev/null || true
+# One launcher entry: Skinamp, with the visualizer window as its action
+# (and in the player: V, or the visualizers along t).
 sed "s|/usr/bin/skinamp|$HOME/.local/bin/skinamp|" \
   "$dir/packaging/desktop/skinamp.desktop" > ~/.local/share/applications/skinamp.desktop
-sed "s|/usr/bin/skinamp-viz|$HOME/.local/bin/skinamp-viz|" \
-  "$dir/packaging/desktop/skinamp-viz.desktop" > ~/.local/share/applications/skinamp-viz.desktop
+rm -f ~/.local/share/applications/skinamp-viz.desktop
 
 # Window rules: the player floats like Omarchy's other TUIs; the visualizer
 # floats larger and opaque. In a marked block, so re-running replaces it

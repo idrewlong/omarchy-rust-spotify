@@ -2,10 +2,16 @@
 Type=Application
 Name=Skinamp
 GenericName=Music Player
-Comment=Fast, skinnable Spotify player for Omarchy
+Comment=The Spotify player you can skin, with visualizers
 Exec=omarchy-launch-or-focus-tui --app-id=org.omarchy.skinamp /usr/bin/skinamp tui
 Icon=skinamp
 Terminal=false
 Categories=AudioVideo;Audio;Player;
-Keywords=spotify;music;player;
+Keywords=spotify;music;player;visualizer;lyrics;winamp;
 StartupWMClass=org.omarchy.skinamp
+Actions=visualizer;
+
+[Desktop Action visualizer]
+Name=Open the visualizer window
+Exec=/usr/bin/skinamp-viz
+Icon=skinamp-viz

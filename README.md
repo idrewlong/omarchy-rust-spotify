@@ -48,8 +48,8 @@ when there's no release for your CPU) needs Rust.
   musical colors, alchemy, battery), then five GPU presets (battery,
   alchemy, spectrum, ambience, warp) drawn in full resolution right in the
   player in terminals that show images (foot, Omarchy's default, does).
-  `V` opens them in a window of their own, as does **Skinamp Visualizer**
-  in the app launcher (`f` for fullscreen).
+  `V` opens them in a window of their own (`f` for fullscreen), as does
+  the Visualizer button in the bar icon's card.
 - **Volume** is your system volume: the bar's slider and the player agree.
 - Notifications on track changes; click one to open the player. Media keys
   and anything else that speaks MPRIS work too.
