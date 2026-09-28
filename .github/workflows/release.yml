@@ -39,8 +39,8 @@ jobs:
         run: |
           v="${GITHUB_REF_NAME#v}"
           mkdir dist
-          tar -C target/release -czf "dist/omarchy-rust-spotify-$v-${{ matrix.arch }}-linux.tar.gz" \
-            omarchy-rust-spotifyd omarchy-rust-spotify omarchy-rust-spotify-viz
+          tar -C target/release -czf "dist/skinamp-$v-${{ matrix.arch }}-linux.tar.gz" \
+            skinampd skinamp skinamp-viz
       - uses: actions/upload-artifact@v4
         with:
           name: dist-${{ matrix.arch }}

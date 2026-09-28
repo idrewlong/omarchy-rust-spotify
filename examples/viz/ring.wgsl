@@ -1,11 +1,11 @@
 // A starting point for your own preset. Copy it to
-// ~/.config/omarchy-rust-spotify/viz/ring.wgsl, open the visualizer
-// (omarchy-rust-spotify-viz, or V in the player's visualizer skin), pick
+// ~/.config/skinamp/viz/ring.wgsl, open the visualizer
+// (skinamp-viz, or V in the player's visualizer skin), pick
 // "ring" with the arrow keys, and edit: it reloads each time you save.
 //
 // A preset is one function returning each pixel's colour. The helpers
 // (bass(), spectrum(x), wave(x), prev(uv), hsv(), ...) are listed at the top
-// of crates/omarchy-rust-spotify-viz/src/shaders/prelude.wgsl.
+// of crates/skinamp-viz/src/shaders/prelude.wgsl.
 
 fn scene(uv: vec2<f32>) -> vec3<f32> {
     let p = centered(uv);

@@ -1,4 +1,4 @@
-# ~/.config/omarchy-rust-spotify/tui.toml
+# ~/.config/skinamp/tui.toml
 # Everything is optional. Colors you leave out follow the active Omarchy
 # theme (and change with it). Edits apply as soon as you save.
 
@@ -43,4 +43,4 @@
 # show-album = true
 # show-status = true
 # show-help = true
-# title = " omarchy-rust-spotify "
+# title = " skinamp "

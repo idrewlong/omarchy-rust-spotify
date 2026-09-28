@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Skinamp Visualizer
+GenericName=Music Visualizer
+Comment=GPU visualizations of what skinamp is playing
+Exec=/usr/bin/skinamp-viz
+Icon=skinamp-viz
+Terminal=false
+Categories=AudioVideo;Audio;
+Keywords=spotify;music;visualizer;milkdrop;
+StartupWMClass=org.omarchy.skinamp.viz

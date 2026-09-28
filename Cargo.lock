@@ -3127,78 +3127,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "omarchy-rust-spotify"
-version = "0.1.4"
-dependencies = [
- "anyhow",
- "image",
- "libc",
- "omarchy-rust-spotify-proto",
- "ratatui",
- "ratatui-image",
- "serde",
- "serde_json",
- "toml",
-]
-
-[[package]]
-name = "omarchy-rust-spotify-proto"
-version = "0.1.4"
-dependencies = [
- "libc",
- "serde",
- "serde_json",
-]
-
-[[package]]
-name = "omarchy-rust-spotify-viz"
-version = "0.1.4"
-dependencies = [
- "anyhow",
- "bytemuck",
- "naga",
- "omarchy-rust-spotify-proto",
- "pollster",
- "serde_json",
- "wgpu",
- "winit",
-]
-
-[[package]]
-name = "omarchy-rust-spotifyd"
-version = "0.1.4"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "bytes",
- "form_urlencoded",
- "futures-util",
- "http",
- "libc",
- "libpulse-binding",
- "libpulse-simple-binding",
- "librespot-connect",
- "librespot-core",
- "librespot-metadata",
- "librespot-playback",
- "librespot-protocol",
- "mpris-server",
- "notify",
- "omarchy-rust-spotify-proto",
- "protobuf",
- "rand 0.9.5",
- "realfft",
- "reqwest",
- "serde",
- "serde_json",
- "sha2 0.11.0",
- "tokio",
- "toml",
- "tracing",
- "tracing-subscriber",
-]
-
-[[package]]
 name = "once_cell"
 version = "1.21.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4738,6 +4666,78 @@ name = "siphasher"
 version = "1.0.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33f4fe9184a62d842c9ef383018f3306d8ba224fd9d836f56d7288308847c256"
+
+[[package]]
+name = "skinamp"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "image",
+ "libc",
+ "ratatui",
+ "ratatui-image",
+ "serde",
+ "serde_json",
+ "skinamp-proto",
+ "toml",
+]
+
+[[package]]
+name = "skinamp-proto"
+version = "0.2.0"
+dependencies = [
+ "libc",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "skinamp-viz"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "bytemuck",
+ "naga",
+ "pollster",
+ "serde_json",
+ "skinamp-proto",
+ "wgpu",
+ "winit",
+]
+
+[[package]]
+name = "skinampd"
+version = "0.2.0"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "bytes",
+ "form_urlencoded",
+ "futures-util",
+ "http",
+ "libc",
+ "libpulse-binding",
+ "libpulse-simple-binding",
+ "librespot-connect",
+ "librespot-core",
+ "librespot-metadata",
+ "librespot-playback",
+ "librespot-protocol",
+ "mpris-server",
+ "notify",
+ "protobuf",
+ "rand 0.9.5",
+ "realfft",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2 0.11.0",
+ "skinamp-proto",
+ "tokio",
+ "toml",
+ "tracing",
+ "tracing-subscriber",
+]
 
 [[package]]
 name = "slab"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Installs omarchy-rust-spotify for the current user: the three binaries into
+# Installs skinamp for the current user: the three binaries into
 # ~/.local/bin, the daemon's systemd user service, app launcher entries, and
 # window rules for the player and visualizer. Safe to re-run: it's also how
 # updates are applied.
@@ -14,9 +14,9 @@
 #   install.sh --local     use ./target/release as built (for development)
 set -euo pipefail
 
-repo=idrewlong/omarchy-rust-spotify
+repo=idrewlong/skinamp
 dir=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-bins=(omarchy-rust-spotifyd omarchy-rust-spotify omarchy-rust-spotify-viz)
+bins=(skinampd skinamp skinamp-viz)
 mode=auto
 case "${1:-}" in
   --source) mode=source ;;
@@ -35,9 +35,9 @@ trap 'rm -rf "$stage"' EXIT
 
 fetch_release() {
   local base="https://github.com/$repo/releases/download/v$version"
-  local tarball="omarchy-rust-spotify-$version-$arch-linux.tar.gz"
+  local tarball="skinamp-$version-$arch-linux.tar.gz"
   command -v curl >/dev/null || return 1
-  say "Downloading omarchy-rust-spotify $version for $arch"
+  say "Downloading skinamp $version for $arch"
   curl -fsSL --retry 2 -o "$stage/$tarball" "$base/$tarball" || return 1
   curl -fsSL --retry 2 -o "$stage/SHA256SUMS" "$base/SHA256SUMS" || return 1
   # Refuse anything that doesn't match the published checksum.
@@ -56,8 +56,8 @@ build_source() {
     exit 1
   }
   # Build outside the plugin folder: target/ gets large.
-  export CARGO_TARGET_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-rust-spotify/build"
-  say "Building omarchy-rust-spotify $version from source (a few minutes the first time)"
+  export CARGO_TARGET_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/skinamp/build"
+  say "Building skinamp $version from source (a few minutes the first time)"
   (cd "$dir" && cargo build --release --locked)
   for b in "${bins[@]}"; do cp "$CARGO_TARGET_DIR/release/$b" "$stage/"; done
 }
@@ -69,8 +69,28 @@ case $mode in
 esac
 
 say "Installing"
+
+# Upgrading from omarchy-rust-spotify (Skinamp's old name): move its sign-in,
+# settings, history and cache over, and take out its service, programs,
+# launcher entries, icons and window rules.
+old=omarchy-rust-spotify
+if [[ -e ~/.config/systemd/user/${old}d.service ]]; then
+  say "Moving over from $old"
+  systemctl --user disable --now "${old}d.service" 2>/dev/null || true
+  rm -f ~/.config/systemd/user/"${old}d.service"
+fi
+for base in ~/.config ~/.local/share ~/.cache; do
+  if [[ -d $base/$old && ! -e $base/skinamp ]]; then
+    mv "$base/$old" "$base/skinamp"
+  fi
+done
+rm -f ~/.local/bin/"${old}d" ~/.local/bin/"${old}-viz" \
+  ~/.local/share/applications/"$old".desktop ~/.local/share/applications/"$old"-viz.desktop \
+  ~/.local/share/icons/hicolor/scalable/apps/"$old".svg ~/.local/share/icons/hicolor/scalable/apps/"$old"-viz.svg
+[[ -f ~/.config/hypr/bindings.lua ]] &&
+  sed -i "/^-- $old: begin/,/^-- $old: end/d" ~/.config/hypr/bindings.lua
 mkdir -p ~/.local/bin ~/.config/systemd/user ~/.local/share/applications \
-  ~/.cache/omarchy-rust-spotify ~/.local/share/omarchy-rust-spotify ~/.config/omarchy-rust-spotify
+  ~/.cache/skinamp ~/.local/share/skinamp ~/.config/skinamp
 # Each binary goes in beside its destination and is renamed into place: the
 # rename is atomic, so an open player that re-execs on update never sees a
 # half-written file.
@@ -78,48 +98,50 @@ for b in "${bins[@]}"; do
   install -m 755 "$stage/$b" ~/.local/bin/".$b.new"
   mv -f ~/.local/bin/".$b.new" ~/.local/bin/"$b"
 done
-sed "s|^ExecStart=.*|ExecStart=$HOME/.local/bin/omarchy-rust-spotifyd|" \
-  "$dir/packaging/systemd/omarchy-rust-spotifyd.service" > ~/.config/systemd/user/omarchy-rust-spotifyd.service
+# The old command name keeps working.
+ln -sfn skinamp ~/.local/bin/omarchy-rust-spotify
+sed "s|^ExecStart=.*|ExecStart=$HOME/.local/bin/skinampd|" \
+  "$dir/packaging/systemd/skinampd.service" > ~/.config/systemd/user/skinampd.service
 # The app icons, where launchers and notifications look them up by name.
 icons=~/.local/share/icons/hicolor/scalable/apps
 mkdir -p "$icons"
-cp "$dir/packaging/icons/omarchy-rust-spotify.svg" "$dir/packaging/icons/omarchy-rust-spotify-viz.svg" "$icons/"
+cp "$dir/packaging/icons/skinamp.svg" "$dir/packaging/icons/skinamp-viz.svg" "$icons/"
 command -v gtk-update-icon-cache >/dev/null && gtk-update-icon-cache -q -t ~/.local/share/icons/hicolor 2>/dev/null || true
-sed "s|/usr/bin/omarchy-rust-spotify|$HOME/.local/bin/omarchy-rust-spotify|" \
-  "$dir/packaging/desktop/omarchy-rust-spotify.desktop" > ~/.local/share/applications/omarchy-rust-spotify.desktop
-sed "s|/usr/bin/omarchy-rust-spotify-viz|$HOME/.local/bin/omarchy-rust-spotify-viz|" \
-  "$dir/packaging/desktop/omarchy-rust-spotify-viz.desktop" > ~/.local/share/applications/omarchy-rust-spotify-viz.desktop
+sed "s|/usr/bin/skinamp|$HOME/.local/bin/skinamp|" \
+  "$dir/packaging/desktop/skinamp.desktop" > ~/.local/share/applications/skinamp.desktop
+sed "s|/usr/bin/skinamp-viz|$HOME/.local/bin/skinamp-viz|" \
+  "$dir/packaging/desktop/skinamp-viz.desktop" > ~/.local/share/applications/skinamp-viz.desktop
 
 # Window rules: the player floats like Omarchy's other TUIs; the visualizer
 # floats larger and opaque. In a marked block, so re-running replaces it
 # and the uninstaller can take it out.
 bindings=~/.config/hypr/bindings.lua
 if [[ -f $bindings ]]; then
-  sed -i '/^-- omarchy-rust-spotify: begin/,/^-- omarchy-rust-spotify: end/d' "$bindings"
+  sed -i '/^-- skinamp: begin/,/^-- skinamp: end/d' "$bindings"
   cat >> "$bindings" <<'LUA'
--- omarchy-rust-spotify: begin
-o.window("org.omarchy.rust-spotify", { tag = "+floating-window" })
-o.window("org.omarchy.rust-spotify.viz", { float = true, center = true, size = { "(monitor_w*0.6)", "(monitor_h*0.6)" }, tag = "-default-opacity", opacity = "1 1" })
--- omarchy-rust-spotify: end
+-- skinamp: begin
+o.window("org.omarchy.skinamp", { tag = "+floating-window" })
+o.window("org.omarchy.skinamp.viz", { float = true, center = true, size = { "(monitor_w*0.6)", "(monitor_h*0.6)" }, tag = "-default-opacity", opacity = "1 1" })
+-- skinamp: end
 LUA
   hyprctl reload >/dev/null 2>&1 || true
 fi
 
 systemctl --user daemon-reload
-systemctl --user enable --quiet omarchy-rust-spotifyd.service
+systemctl --user enable --quiet skinampd.service
 # Restart: an update takes effect now, and the daemon picks up what was
 # playing where it left off.
-systemctl --user restart omarchy-rust-spotifyd.service
-echo "$version" > ~/.local/share/omarchy-rust-spotify/installed-version
+systemctl --user restart skinampd.service
+echo "$version" > ~/.local/share/skinamp/installed-version
 
-say "omarchy-rust-spotify $version is installed."
+say "Skinamp $version is installed."
 # First time: sign in (opens your browser). The bar icon's card has a
 # Sign in button for later, too.
 for _ in 1 2 3 4 5; do
-  out=$(~/.local/bin/omarchy-rust-spotify status 2>&1 || true)
+  out=$(~/.local/bin/skinamp status 2>&1 || true)
   if grep -q "not signed in" <<<"$out"; then
     say "Sign in to Spotify (Premium) in the browser window that opens."
-    ~/.local/bin/omarchy-rust-spotify login || true
+    ~/.local/bin/skinamp login || true
     break
   fi
   grep -q "^device:" <<<"$out" && break

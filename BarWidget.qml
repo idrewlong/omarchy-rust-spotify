@@ -5,7 +5,7 @@ import Quickshell.Io
 import qs.Commons
 import qs.Ui
 
-// The music icon for omarchy-rust-spotify. Hover it for the mini player: the
+// The music icon for skinamp. Hover it for the mini player: the
 // cover (and a blur of it behind the card), the track, a live spectrum of
 // what's playing, the current lyric line, seek, transport, like and volume;
 // click it to open the full player; middle-click toggles playback; the
@@ -16,7 +16,7 @@ import qs.Ui
 // to the daemon, so nothing here polls or waits on MPRIS.
 BarWidget {
   id: root
-  moduleName: "io.github.idrewlong.omarchy-rust-spotify"
+  moduleName: "io.github.idrewlong.skinamp"
 
   implicitWidth: button.implicitWidth
   implicitHeight: button.implicitHeight
@@ -31,7 +31,7 @@ BarWidget {
 
   Socket {
     id: sock
-    path: root.runtimeDir + "/omarchy-rust-spotify/omarchy-rust-spotify.sock"
+    path: root.runtimeDir + "/skinamp/skinamp.sock"
     connected: true
 
     onConnectedChanged: root.online = connected
@@ -95,8 +95,8 @@ BarWidget {
 
   function openPlayer() {
     Quickshell.execDetached([
-      "omarchy-launch-or-focus-tui", "--app-id=org.omarchy.rust-spotify",
-      root.home + "/.local/bin/omarchy-rust-spotify", "tui"
+      "omarchy-launch-or-focus-tui", "--app-id=org.omarchy.skinamp",
+      root.home + "/.local/bin/skinamp", "tui"
     ])
   }
 
@@ -124,7 +124,7 @@ BarWidget {
 
   FileView {
     id: installedFile
-    path: root.home + "/.local/share/omarchy-rust-spotify/installed-version"
+    path: root.home + "/.local/share/skinamp/installed-version"
     watchChanges: true
     printErrors: false
     onLoaded: { root.haveVersion = text().trim(); root.haveChecked = true }
@@ -157,10 +157,10 @@ BarWidget {
   readonly property var action: needsSetup ? ["Set up", runInstaller]
     : updateReady ? ["Update to " + wantVersion, runInstaller]
     : !online ? ["Start the player", function() {
-        Quickshell.execDetached(["systemctl", "--user", "start", "omarchy-rust-spotifyd.service"])
+        Quickshell.execDetached(["systemctl", "--user", "start", "skinampd.service"])
       }]
     : st.error === "signed_out" ? ["Sign in to Spotify", function() {
-        Quickshell.execDetached([root.home + "/.local/bin/omarchy-rust-spotify", "login"])
+        Quickshell.execDetached([root.home + "/.local/bin/skinamp", "login"])
       }]
     : null
 
@@ -175,7 +175,7 @@ BarWidget {
   readonly property string artUrl: track
     ? (track.cover_path ? "file://" + track.cover_path : (track.cover_url || ""))
     : ""
-  readonly property string problem: needsSetup ? "Set up omarchy-rust-spotify"
+  readonly property string problem: needsSetup ? "Set up skinamp"
     : !online ? "Player isn't running"
     : st.error === "signed_out" ? "Not signed in"
     : st.error === "premium_required" ? "Spotify Premium is required"
@@ -729,7 +729,7 @@ BarWidget {
           verticalPadding: Style.spacing.controlPaddingY
           onClicked: {
             root.popupOpen = false
-            Quickshell.execDetached([root.home + "/.local/bin/omarchy-rust-spotify-viz"])
+            Quickshell.execDetached([root.home + "/.local/bin/skinamp-viz"])
           }
         }
       }

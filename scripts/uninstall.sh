@@ -3,29 +3,29 @@
 # launcher entries and window rules. With --purge, also your sign-in, cache
 # and settings. Remove the bar plugin itself afterwards with:
 #
-#   omarchy plugin remove io.github.idrewlong.omarchy-rust-spotify
+#   omarchy plugin remove io.github.idrewlong.skinamp
 set -euo pipefail
 
 purge=0
 [[ ${1:-} == --purge ]] && purge=1
 
-systemctl --user disable --now omarchy-rust-spotifyd.service 2>/dev/null || true
-rm -f ~/.config/systemd/user/omarchy-rust-spotifyd.service
+systemctl --user disable --now skinampd.service 2>/dev/null || true
+rm -f ~/.config/systemd/user/skinampd.service
 systemctl --user daemon-reload
-rm -f ~/.local/bin/omarchy-rust-spotifyd ~/.local/bin/omarchy-rust-spotify ~/.local/bin/omarchy-rust-spotify-viz
-rm -f ~/.local/share/applications/omarchy-rust-spotify.desktop \
-  ~/.local/share/applications/omarchy-rust-spotify-viz.desktop \
-  ~/.local/share/icons/hicolor/scalable/apps/omarchy-rust-spotify.svg \
-  ~/.local/share/icons/hicolor/scalable/apps/omarchy-rust-spotify-viz.svg
+rm -f ~/.local/bin/skinampd ~/.local/bin/skinamp ~/.local/bin/skinamp-viz ~/.local/bin/omarchy-rust-spotify
+rm -f ~/.local/share/applications/skinamp.desktop \
+  ~/.local/share/applications/skinamp-viz.desktop \
+  ~/.local/share/icons/hicolor/scalable/apps/skinamp.svg \
+  ~/.local/share/icons/hicolor/scalable/apps/skinamp-viz.svg
 bindings=~/.config/hypr/bindings.lua
 if [[ -f $bindings ]]; then
-  sed -i '/^-- omarchy-rust-spotify: begin/,/^-- omarchy-rust-spotify: end/d' "$bindings"
+  sed -i '/^-- skinamp: begin/,/^-- skinamp: end/d' "$bindings"
   hyprctl reload >/dev/null 2>&1 || true
 fi
-rm -f ~/.local/share/omarchy-rust-spotify/installed-version
+rm -f ~/.local/share/skinamp/installed-version
 if (( purge )); then
-  rm -rf ~/.local/share/omarchy-rust-spotify ~/.cache/omarchy-rust-spotify ~/.config/omarchy-rust-spotify
-  echo "Removed omarchy-rust-spotify, your sign-in, cache and settings."
+  rm -rf ~/.local/share/skinamp ~/.cache/skinamp ~/.config/skinamp
+  echo "Removed skinamp, your sign-in, cache and settings."
 else
-  echo "Removed omarchy-rust-spotify. Your sign-in and settings are kept (--purge removes them)."
+  echo "Removed skinamp. Your sign-in and settings are kept (--purge removes them)."
 fi

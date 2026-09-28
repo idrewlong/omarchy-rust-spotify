@@ -1,4 +1,4 @@
-# omarchy-rust-spotify
+# Skinamp
 
 **The Spotify player you can skin**, for [Omarchy](https://omarchy.org).
 A music icon in your bar with a mini player on hover, and a fast terminal
@@ -17,7 +17,7 @@ the background player and 20 MB for the player window. Apple Silicon
 ## Install
 
 ```sh
-omarchy plugin add https://github.com/idrewlong/omarchy-rust-spotify --enable
+omarchy plugin add https://github.com/idrewlong/skinamp --enable
 ```
 
 Then hover the music icon in the bar and click **Set up**. A terminal shows
@@ -35,7 +35,7 @@ when there's no release for your CPU) needs Rust.
 - **Bar icon:** hover for the mini player (cover, progress, shuffle,
   previous, play/pause, next, repeat, ♥ like); click to open the player;
   middle-click plays/pauses; scroll skips.
-- **Player** (also **Spotify (Rust)** in the app launcher): your library,
+- **Player** (also **Skinamp** in the app launcher): your library,
   playlists (most recently played first, like Spotify) and search. `t`
   steps through the skins and every visualizer, `T` goes back. Space
   plays/pauses, `n`/`p` skip, `f` likes, `/` searches, `?` lists every key for the
@@ -43,12 +43,12 @@ when there's no release for your CPU) needs Rust.
 - **Lyrics:** a skin of its own. Synced lyrics follow the song, the
   current line highlighted in the middle; click a line to jump there.
   From [LRCLIB](https://lrclib.net), the open lyrics database; also
-  `omarchy-rust-spotify lyrics` in a terminal.
+  `skinamp lyrics` in a terminal.
 - **Visualizers:** seven terminal styles (bars, mirror, scope, fire storm,
   musical colors, alchemy, battery), then five GPU presets (battery,
   alchemy, spectrum, ambience, warp) drawn in full resolution right in the
   player in terminals that show images (foot, Omarchy's default, does).
-  `V` opens them in a window of their own, as does **Spotify Visualizer**
+  `V` opens them in a window of their own, as does **Skinamp Visualizer**
   in the app launcher (`f` for fullscreen).
 - **Volume** is your system volume: the bar's slider and the player agree.
 - Notifications on track changes; click one to open the player. Media keys
@@ -56,36 +56,36 @@ when there's no release for your CPU) needs Rust.
 
 ## Make it yours
 
-- `~/.config/omarchy-rust-spotify/tui.toml`: default skin, visualizer,
+- `~/.config/skinamp/tui.toml`: default skin, visualizer,
   playlist order, colors, layout (see [`examples/tui.toml`](examples/tui.toml)).
-- `~/.config/omarchy-rust-spotify/config.toml`: device name, bitrate,
+- `~/.config/skinamp/config.toml`: device name, bitrate,
   notifications.
-- Your own visualizers: a WGSL file in `~/.config/omarchy-rust-spotify/viz/`
+- Your own visualizers: a WGSL file in `~/.config/skinamp/viz/`
   (start from [`examples/viz/ring.wgsl`](examples/viz/ring.wgsl)). It shows
   up among the GPU presets and reloads each time you save.
 - Artists, albums and playlists in search results: add your own
   [Spotify developer app](https://developer.spotify.com/dashboard) (redirect
-  URI `http://127.0.0.1:8989/login`) with `omarchy-rust-spotify login-app
+  URI `http://127.0.0.1:8989/login`) with `skinamp login-app
   <client-id>`. Optional: without it your playlists, Liked Songs, albums and
   song search come through the player's own Spotify connection. With it,
   the rate limit is yours alone, not shared with every other user.
 
 ## Try it without an account
 
-`omarchy-rust-spotify tui --demo` opens the player with made-up music (no
+`skinamp tui --demo` opens the player with made-up music (no
 daemon, no sign-in): press `t` to go through every skin and visualizer.
 The preview above is demo mode.
 
 ## Update
 
-`omarchy plugin update io.github.idrewlong.omarchy-rust-spotify`, then
+`omarchy plugin update io.github.idrewlong.skinamp`, then
 **Update** in the bar icon's card. What was playing carries on.
 
 ## Remove
 
 ```sh
-~/.config/omarchy/plugins/io.github.idrewlong.omarchy-rust-spotify/scripts/uninstall.sh
-omarchy plugin remove io.github.idrewlong.omarchy-rust-spotify
+~/.config/omarchy/plugins/io.github.idrewlong.skinamp/scripts/uninstall.sh
+omarchy plugin remove io.github.idrewlong.skinamp
 ```
 
 The first command stops and removes the player, its service, launcher

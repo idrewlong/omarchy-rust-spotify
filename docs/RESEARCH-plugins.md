@@ -117,7 +117,7 @@ Across the rest of the field:
 4. ~~**Keyboard discoverability**~~ Done: `?` shows the keys that work
    in the current skin.
 5. ~~**Lyrics**~~ Done: a Lyrics skin (synced, click a line to seek) and
-   `omarchy-rust-spotify lyrics`, from LRCLIB. (Spotify's own lyrics
+   `skinamp lyrics`, from LRCLIB. (Spotify's own lyrics
    service 404s for librespot sessions.)
 6. **The bar card:** ~~like button~~ (done), volume, device picker, a mini
    visualizer.

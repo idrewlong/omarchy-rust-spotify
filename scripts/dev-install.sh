@@ -8,31 +8,33 @@ cargo build --release
 # Everything a user install does, from this build.
 scripts/install.sh --local
 
-# The Omarchy bar widget, linked so shell edits here apply live. It takes
-# the old v2 plugin's place in the bar the first time (that plugin stays
-# installed, just out of the bar).
-plugin_id=io.github.idrewlong.omarchy-rust-spotify
+# The Omarchy bar widget, linked to this checkout.
+plugin_id=io.github.idrewlong.skinamp
+old_id=io.github.idrewlong.omarchy-rust-spotify
 mkdir -p ~/.config/omarchy/plugins
+rm -f ~/.config/omarchy/plugins/$old_id
 ln -sfn "$PWD" ~/.config/omarchy/plugins/$plugin_id
-# First install: take the old v2 widget's place in the bar if it's there,
-# else the center. After that, leave the user's placement alone.
+# The bar: the old name's slot becomes Skinamp's; a first install goes to
+# the centre. After that, the user's placement is left alone.
 shell_json=~/.config/omarchy/shell.json
 section=""
 if [[ -f $shell_json ]] && ! jq -e --arg id "$plugin_id" '[.bar.layout[][]? | select(.id == $id)] | length > 0' "$shell_json" >/dev/null; then
-  section=right
-  cp "$shell_json" "$shell_json.bak-rust-spotify"
-  # Just left of the weather, when there is one.
-  if jq -e '[.bar.layout.right[]? | select(.id == "omarchy.weather")] | length > 0' "$shell_json" >/dev/null; then
-    jq --arg id "$plugin_id" '.bar.layout.right |= ((map(.id) | index("omarchy.weather")) as $i | .[:$i] + [{id: $id}] + .[$i:])' \
-      "$shell_json.bak-rust-spotify" > "$shell_json"
-    section=""
-  fi
-  if jq -e '[.bar.layout[][]? | select(.id == "io.github.idrewlong.ncspot-keepalive")] | length > 0' "$shell_json" >/dev/null; then
-    jq --arg id "$plugin_id" '.bar.layout |= map_values(map(if .id == "io.github.idrewlong.ncspot-keepalive" then {id: $id} else . end))' \
-      "$shell_json.bak-rust-spotify" > "$shell_json"
-    section=""
+  cp "$shell_json" "$shell_json.bak-skinamp"
+  if jq -e --arg id "$old_id" '[.bar.layout[][]? | select(.id == $id)] | length > 0' "$shell_json" >/dev/null; then
+    jq --arg new "$plugin_id" --arg old "$old_id" '.bar.layout |= map_values(map(if .id == $old then {id: $new} else . end))' \
+      "$shell_json.bak-skinamp" > "$shell_json"
+  else
+    section=center
   fi
 fi
 omarchy plugin enable "$plugin_id" ${section:+--section "$section"} >/dev/null 2>&1 || true
+# The shell caches a widget it has loaded: restart it when the widget
+# changed, or an old card keeps showing.
+stamp=~/.cache/skinamp/widget.sha
+now=$(sha256sum BarWidget.qml | cut -d' ' -f1)
+if [[ $(cat "$stamp" 2>/dev/null) != "$now" ]]; then
+  echo "$now" > "$stamp"
+  omarchy restart shell >/dev/null 2>&1 || true
+fi
 
-systemctl --user --no-pager status omarchy-rust-spotifyd.service | head -5
+systemctl --user --no-pager status skinampd.service | head -5
